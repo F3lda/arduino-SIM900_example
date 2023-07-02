@@ -108,19 +108,8 @@ void loop()
             sim900powerUpDown(SIM900_PIN_POWER);
         } else if(strcmp(serialChars,"SEND") == 0) { // send SMS
             SIM900.print((char)(26));
-        } else if(strcmp(serialChars,"AT") == 0) {
-            if(SIM900checkWithCmd("AT", "OK", handleSIM900message)){
-                Serial.println(F("Command AT: OK"));
-            } else {
-                Serial.println(F("Command AT: ERROR!"));
-            }
-
-            SIM900sendCmd("AT");
-            if(SIM900waitForResponse("OK", SIM900_RESPONSE_TIMEOUT_DEFAULT, SIM900_STRING_MAX_LENGTH, NULL)){
-                Serial.println(F("Command AT: OK"));
-            } else {
-                Serial.println(F("Command AT: ERROR!"));
-            }
+        } else if(strcmp(serialChars,"STATUS") == 0) {
+            sim900checkStatus();
         } else {
             SIM900sendCmd(serialChars);
         }
@@ -146,19 +135,10 @@ void sim900loop()
     static unsigned int handshakeSIM900counter = 0;
     if(handshakeSIM900counter > 30*60*15){ // handshake with SIM900 Shield about every 15 minutes
         handshakeSIM900counter = 0;
-        if(SIM900checkWithCmd("AT", "OK", handleSIM900message)){
-            Serial.println(F("Command AT: OK"));
-            Serial.print(F("FREE RAM: "));
-            Serial.println(freeMemory());
-            SIM900sendCmd("AT+CCLK?"); // check time
-        } else {
-            Serial.println(F("Command AT: ERROR!"));
-            Serial.println(F("Restarting GSM module..."));
-            sim900powerUpDown(SIM900_PIN_POWER);
-            SIM900waitForResponse("NORMAL POWER DOWN", SIM900_RESPONSE_TIMEOUT_DEFAULT, SIM900_STRING_MAX_LENGTH, handleSIM900message);
-            delay(1500);
-            sim900init();
-        }
+
+        // check time to restart
+        SIM900sendCmd("AT+CCLK?");
+        
     } else {
         handshakeSIM900counter++;
     }
@@ -197,7 +177,7 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
             char *datetime = strstr(sim900outputData, "\"");
             if((datetime != NULL) && !(lastResetDay[0] == '0' && lastResetDay[1] == '0') && (lastResetDay[0] != datetime[7] || lastResetDay[1] != datetime[8])){
 
-                // TIME TO RESET
+                // TIME TO RESET - Resetart ALL devices
                 Serial.println(F("Time to RESET Arduino!"));
                 Serial.println(F("Turning OFF Gate remote controller..."));
                 digitalWrite(pinController, LOW);
@@ -211,6 +191,7 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
                     sim900powerUpDown(SIM900_PIN_POWER);
                     delay(1500);
                 }
+                delay(3500);
                 Serial.println(F("Done."));
 
                 Serial.println(F("Restarting Arduino..."));
@@ -220,6 +201,15 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
 
             } else {
                 Serial.println(F("Not yet."));
+
+                if(sim900checkStatus() != 0) {
+                    // Restart GSM module
+                    Serial.println(F("Restarting GSM module..."));
+                    sim900powerUpDown(SIM900_PIN_POWER);
+                    SIM900waitForResponse("NORMAL POWER DOWN", SIM900_RESPONSE_TIMEOUT_DEFAULT, SIM900_STRING_MAX_LENGTH, handleSIM900message);
+                    delay(5000);
+                    sim900init();
+                }
             }
 
             if(datetime != NULL){
@@ -770,6 +760,42 @@ bool sim900init()
     return 1;
 }
 
+int sim900checkStatus()
+{
+    // check free ram
+    Serial.print(F("FREE RAM: "));
+    Serial.println(freeMemory());
+
+    int errorCount = 0;
+
+    // AT
+    if(SIM900checkWithCmd("AT", "OK", handleSIM900message)){
+        Serial.println(F("Command AT: OK"));
+    } else {
+        Serial.println(F("Command AT: ERROR!"));
+        errorCount++;
+    }
+
+    // SIM card ready
+    if(SIM900checkWithCmd("AT+CPIN?", "+CPIN: READY", handleSIM900message)){
+        SIM900waitForResponse("OK", SIM900_RESPONSE_TIMEOUT_DEFAULT, SIM900_STRING_MAX_LENGTH, handleSIM900message);
+        Serial.println(F("SIM card ready: OK"));
+    } else {
+        Serial.println(F("SIM card ready: ERROR!"));
+        errorCount++;
+    }
+
+    // Mobile network registered
+    if(SIM900checkWithCmd("AT+CREG?", "+CREG: 0,1", handleSIM900message)){
+        SIM900waitForResponse("OK", SIM900_RESPONSE_TIMEOUT_DEFAULT, SIM900_STRING_MAX_LENGTH, handleSIM900message);
+        Serial.println(F("Mobile network registered: OK"));
+    } else {
+        Serial.println(F("Mobile network registered: ERROR!"));
+        errorCount++;
+    }
+
+    return errorCount;
+}
 
 /************************************************ BASIC FUNCTIONS ****************************************************/
 
