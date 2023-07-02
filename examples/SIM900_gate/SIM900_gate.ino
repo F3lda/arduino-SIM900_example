@@ -1,3 +1,12 @@
+/**
+ * @file SIM900_loop.ino
+ *
+ * @brief Arduino with SIM900 shield example with basic loop
+ * @date 2019-06-23
+ * @author F3lda
+ * @update 2023-07-02
+ */
+
 // SIM900 GSM Shield example
 //---------------------------
 // libraries
@@ -138,7 +147,7 @@ void sim900loop()
 
         // check time to restart
         SIM900sendCmd("AT+CCLK?");
-        
+
     } else {
         handshakeSIM900counter++;
     }
