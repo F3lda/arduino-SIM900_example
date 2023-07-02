@@ -1,12 +1,3 @@
-/**
- * @file SIM900_gate.ino
- * 
- * @brief Arduino with SIM900 shield example used to open gates
- * @date 2019-06-23
- * @author F3lda
- * @update 2023-06-23
- */
-
 // SIM900 GSM Shield example
 //---------------------------
 // libraries
@@ -18,7 +9,6 @@
 // General
 #define SIM900_STRING_MAX_LENGTH 164 // 164 -> max SMS size = 160 chars (153 <message> + 7 <joining data> OR 160 <only one message> --- https://stackoverflow.com/a/28029200)
 #define SIM900_RESPONSE_TIMEOUT_DEFAULT 15000 // 15 seconds
-//unsigned int handshakeSIM900counter = 0;
 #define SMS_QUEUE_SIZE 10 // AT+CMGD=? -> get size of the SMS storage
 #define SIM_CREDIT_STATUS_CMD "ATD*125*#;" // Dial *125*#
 
@@ -28,13 +18,11 @@
 #define SIM900_PIN_TX 8
 #define SIM900_PIN_POWER 9
 SoftwareSerial SIM900 = SoftwareSerial(SIM900_PIN_RX, SIM900_PIN_TX); // RX, TX
-//char SMS_BUFFER[3][SIM900_STRING_MAX_LENGTH] = {0};
 
 // SMS queue
 int SMS_QUEUE_ARRAY[SMS_QUEUE_SIZE] = {0};
 int queue_rear = -1;
 int queue_front = -1;
-
 
 // Relays
 #define RELAY_TIMEOUT 180000 // = 1000*60*3 (3 minutes)
@@ -44,6 +32,7 @@ int queue_front = -1;
 
 /************************************************ FUNCTIONS ****************************************************/
 
+void sim900loop();
 void handleSIM900message(bool isEOLread, char *sim900outputData);
 bool checkWhitelist(char *telNumber);
 void strtoupper(char *str);
@@ -62,10 +51,10 @@ void SIM900prepareNewSMS(const char *telNumber);
 void SIM900addSMSdata(const char *message);
 void SIM900sendPreparedSMS();
 void SIM900sendSMS(const char *telNumber, const char *message);
-bool SIM900readLine(char *outputData, unsigned int bufferLength);
+bool SIM900readLine(char *outputData, int bufferLength);
 void SIM900sendCmd(const char *cmd);
 typedef void (*handleSIM900messageFuncPtr)(bool, char*); // create a type to point to a funciton
-bool SIM900waitForResponse(const char *expectedResponse, unsigned int timeoutMS, unsigned int responseBufferLength, handleSIM900messageFuncPtr callbackFunctionForOtherResponses);
+bool SIM900waitForResponse(const char *expectedResponse, unsigned int timeoutMS, int responseBufferLength, handleSIM900messageFuncPtr callbackFunctionForOtherResponses);
 bool SIM900checkWithCmd(const char *cmd, const char *expectedResponse, handleSIM900messageFuncPtr callbackFunctionForOtherResponses);
 bool SIM900waitForSerialDataAvailable(unsigned int timeoutMS);
 void SIM900flushSerial();
@@ -79,8 +68,8 @@ void setup()
     Serial.begin(9600);               // Arduino USB serial baud rate
     Serial.print(F("\r"));            // Print carriage return (return to left margin) and...
     Serial.flush();                   // ...wait until it's written (wait for serial port to connect)
-    
-    
+
+
     // SIM900 setup pins
     pinMode(SIM900_PIN_RX, INPUT);
     pinMode(SIM900_PIN_TX, OUTPUT);
@@ -93,8 +82,8 @@ void setup()
     digitalWrite(pinDoor, HIGH);
     pinMode(pinController, OUTPUT);
     digitalWrite(pinController, HIGH);
-    
-    
+
+
     Serial.println(F("Arduino is ready!"));
     sim900init(); // init SIM900
 }
@@ -102,14 +91,9 @@ void setup()
 
 void loop()
 {
-    // receive SIM900 serial data
-    if (SIM900.available() > 0){
-        char sim900outputData[SIM900_STRING_MAX_LENGTH] = {0};
-        bool isEOLread = SIM900readLine(sim900outputData, sizeof(sim900outputData) - 1);
-        handleSIM900message(isEOLread, sim900outputData);
-    }
-    
-    
+    // SIM900 receiving loop
+    sim900loop();
+
     // receive USB serial data
     if (Serial.available() > 0){
         char serialChars[SIM900_STRING_MAX_LENGTH] = {0};
@@ -130,18 +114,34 @@ void loop()
             } else {
                 Serial.println(F("Command AT: ERROR!"));
             }
-            /*SIM900sendCmd("AT");
+
+            SIM900sendCmd("AT");
             if(SIM900waitForResponse("OK", SIM900_RESPONSE_TIMEOUT_DEFAULT, SIM900_STRING_MAX_LENGTH, NULL)){
                 Serial.println(F("Command AT: OK"));
             } else {
                 Serial.println(F("Command AT: ERROR!"));
-            }*/
+            }
         } else {
             SIM900sendCmd(serialChars);
         }
     }
-    
-    
+
+    // short delay
+    delay(33);
+}
+
+
+/************************************************ FUNCTIONS ****************************************************/
+
+void sim900loop()
+{
+    // receive SIM900 serial data
+    if (SIM900.available() > 0){
+        char sim900outputData[SIM900_STRING_MAX_LENGTH] = {0};
+        bool isEOLread = SIM900readLine(sim900outputData, sizeof(sim900outputData)-1);
+        handleSIM900message(isEOLread, sim900outputData);
+    }
+
     // check if GSM module is OK
     static unsigned int handshakeSIM900counter = 0;
     if(handshakeSIM900counter > 30*60*15){ // handshake with SIM900 Shield about every 15 minutes
@@ -162,19 +162,14 @@ void loop()
     } else {
         handshakeSIM900counter++;
     }
-    
-    
-    // short delay
-    delay(33); 
 }
-
-
-/************************************************ FUNCTIONS ****************************************************/
 
 void handleSIM900message(bool isEOLread, char *sim900outputData)
 {
     // skip empty lines
     if(sim900outputData[0] != '\0'){
+        trim(sim900outputData);
+
         Serial.print(F("["));
         Serial.print(sim900outputData);
         Serial.print(F("]"));
@@ -184,38 +179,29 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
         Serial.print(F("("));
         Serial.print(strlen(sim900outputData));
         Serial.println(F(")"));
-        
+
         static int RINGcount = 0;
-        static char CALLERid[20] = {0};
-        static char SMSid[20] = {0};
+        static bool SMShandling = false;
+
         static bool CMD_CREDIT = false;
         static bool CMD_SIGNAL = false;
-        //static unsigned long SMS_last_millis = 0;
-        //static int SMS_last_received = 0;
-        //static bool SMS_waiting = false;
-        
-        //static int SMS_read_index = 0;
-        
-        static bool handlingSMS = false;
-        static bool checkingSMSqueue = false;
 
-        static char LastSMSid[20] = {0};
-        static bool SenderNumberSent = false;
-        
-        
+
         // the datetime received (check RESET)
         if(strstr(sim900outputData, "+CCLK:") == sim900outputData){
             static char lastResetDay[3] = "00"; // reset arduino every day (when day in date changes)
+
             Serial.print(F("Last DAY: "));
             Serial.println(lastResetDay);
+
             char *datetime = strstr(sim900outputData, "\"");
-            if((lastResetDay[0] != datetime[7] || lastResetDay[1] != datetime[8]) && !(lastResetDay[0] == '0' && lastResetDay[1] == '0')){
-                
-                
+            if((datetime != NULL) && !(lastResetDay[0] == '0' && lastResetDay[1] == '0') && (lastResetDay[0] != datetime[7] || lastResetDay[1] != datetime[8])){
+
                 // TIME TO RESET
                 Serial.println(F("Time to RESET Arduino!"));
                 Serial.println(F("Turning OFF Gate remote controller..."));
                 digitalWrite(pinController, LOW);
+
                 Serial.println(F("Turning OFF GSM shield..."));
                 // SIM900 check power
                 SIM900sendCmd("AT");
@@ -226,170 +212,164 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
                     delay(1500);
                 }
                 Serial.println(F("Done."));
-                
+
                 Serial.println(F("Restarting Arduino..."));
                 // wait for watchdog timer
                 wdt_enable(WDTO_4S); // 3 seconds - wdt_reset();
                 delay(10000);
-                
-                
+
             } else {
                 Serial.println(F("Not yet."));
             }
+
             if(datetime != NULL){
                 lastResetDay[0] = datetime[7];
                 lastResetDay[1] = datetime[8];
             }
+
             Serial.print(F("New DAY: "));
             Serial.println(lastResetDay);
             SIM900flushSerial();
-        
+
         // incomming call - RING
         } else if(strcmp(sim900outputData, "RING") == 0){
             RINGcount++;
-        
+
         // incomming call - caller ID
         } else if(strstr(sim900outputData, "+CLIP:") == sim900outputData){
-            char *telnumber = strstr(sim900outputData, "\"")+1;
-            memset(CALLERid, '\0', sizeof(char)*20);
-            memcpy(CALLERid, telnumber, 13);
+            char *telnumber = strstr(sim900outputData, "\"")+1; // TODO check NULL
+            char CALLERid[20] = {0};
+            memset(CALLERid, '\0', sizeof(CALLERid));
+            memcpy(CALLERid, telnumber, 13);// OR until the " char
+
             Serial.print(F("CALLER ID: "));
             Serial.println(CALLERid);
             Serial.print(F("RING COUNT: "));
             Serial.println(RINGcount);
+
             if(!checkWhitelist(CALLERid)){
                 Serial.println(F("NOT on Whitelist!"));
+
                 // hangup
                 SIM900sendCmd("ATH");
+                SIM900waitForResponse("OK", SIM900_RESPONSE_TIMEOUT_DEFAULT, SIM900_STRING_MAX_LENGTH, handleSIM900message);
                 RINGcount = 0;
-                
-                
+
                 Serial.println(F("Send SMS..."));
-                SIM900sendSMS(ADMIN_TEL_NUMBER, CALLERid);// TODO add text: Unknown caller: number
+                snprintf(sim900outputData, SIM900_STRING_MAX_LENGTH, "Unknown caller: %s", CALLERid); // recycling sim900outputData variable
+                SIM900sendSMS(ADMIN_TEL_NUMBER, sim900outputData);
                 Serial.println(F("Done."));
-                
-                
+
+
             } else if(RINGcount == 4){// 4 => 3rd ring
+                Serial.println(F("ON Whitelist!"));
+
                 // hangup
                 SIM900sendCmd("ATH");
-                
-                Serial.println(F("ON Whitelist!"));
-                brana();
+                SIM900waitForResponse("OK", SIM900_RESPONSE_TIMEOUT_DEFAULT, SIM900_STRING_MAX_LENGTH, handleSIM900message);
                 RINGcount = 0;
+
+                // do something
+                brana();
             }
-        
+
         // incomming call - finished by caller
         } else if(strcmp(sim900outputData, "NO CARRIER") == 0){
             RINGcount = 0;
-            
+
         // SMS message received
         } else if(strstr(sim900outputData, "+CMTI:") == sim900outputData){
-            
-            Serial.println(F("New SMS!"));
-            
-            
-            
-            
-            
-            // TODO hadndle new SMS here!!! and not in reading SMS --> in reding SMS just after the last SMS check ANY remaining SMS
+            Serial.println(F("New SMS received!"));
 
-
+            // get new sms index
             char *sms_index = strstr(sim900outputData, ",")+1;
             int new_sms_index = atoi(sms_index);
-            queueInsert(new_sms_index);
+            if(new_sms_index != 0) {
+                queueInsert(new_sms_index);
+            }
             Serial.println(sms_index);
 
 
-            // !handlingSMS <==> queuePeek() == 0
-            if (!handlingSMS) {
-                handlingSMS = true;
-                //queueInsert(1);
-                
-                char tempStr[20] = {0};
-                sprintf(tempStr, "AT+CMGR=%d", new_sms_index);
-                SIM900sendCmd(tempStr);
+            // if not already handling other sms -> start with the current new one
+            if (!SMShandling) {
                 Serial.println(F("HANDLING TRUE!"));
+                SMShandling = true;
+
+                char tempStr[20] = {0};
+                snprintf(tempStr, sizeof(tempStr), "AT+CMGR=%d", new_sms_index);
+                SIM900sendCmd(tempStr);
             }
-            
-            
-            //SMS_read_index = 1;
-            //SIM900sendCmd("AT+CMGL=\"ALL\"");
-            
-            
-            /*if(!SIM900waitForResponse("+CMTI:", 30000, SIM900_STRING_MAX_LENGTH, handleSIM900message)){
-                
-                Serial.println("Read SMS");
-                
-                SMS_read_index = 1;
-                SIM900sendCmd("AT+CMGL=\"ALL\"");
-            } else {
-                SIM900sendCmd("+CMTI:");
-            }*/
-            
-            Serial.println(F("New SMS - done"));
-            
-        
+
+            Serial.println(F("New SMS received - done"));
+
         // SMS message read and send
         } else if(strstr(sim900outputData, "+CMGR:") == sim900outputData){
-            
-            
-            if (handlingSMS && !checkingSMSqueue) {
-            
-            
+
+            static bool checkingSMSqueue = false;
+            // when handling SMS and not checking for new received SMS
+            if (SMShandling && !checkingSMSqueue) {
+
                 Serial.println(F("READING SMS!"));
-                
-                
-                
-                
-                char *telnumber = strstr(sim900outputData, ",\"")+2; 
-                memset(SMSid, '\0', sizeof(char)*20);
+
+                // get SMS sender tel number
+                char *telnumber = strstr(sim900outputData, ",\"")+2; // TODO check NULL
+                char SMSid[20] = {0};
+                memset(SMSid, '\0', sizeof(SMSid));
                 strstr(telnumber, "\",\"")[0] = '\0';
-                snprintf(SMSid, 20, "%s", telnumber);
-                //memcpy(SMSid, telnumber, (int)strstr(telnumber, "\",\"")-(int)telnumber); // TODO copy only to buffer max size - strncpy() ---> done by sprintf()
-                
+                snprintf(SMSid, sizeof(SMSid), "%s", telnumber);
+
+                // get SMS text
                 char smsMessage[SIM900_STRING_MAX_LENGTH] = {0};
                 SIM900readLine(smsMessage, SIM900_STRING_MAX_LENGTH);
                 int smsMessageLength = strlen(smsMessage);
-                
+
                 Serial.print(F("SMS ID: "));
                 Serial.println(SMSid);
-                Serial.print(F("SMS: "));
+                Serial.print(F("SMS text: "));
                 Serial.print(smsMessage);
                 Serial.print(F(" ("));
                 Serial.print(smsMessageLength);
                 Serial.println(F(")"));
-                
+
                 SIM900waitForResponse("OK", SIM900_RESPONSE_TIMEOUT_DEFAULT, SIM900_STRING_MAX_LENGTH, handleSIM900message);
                 Serial.println(F("Reading SMS Done."));
-                
-                
-                //handlingSMS = false;
-                //return;
-                
+
+
+
+
+
+                // recycling sim900outputData variable
                 char *smsCmd = sim900outputData;
                 smsCmd[0] = '\0';
-                
-                
-                // last message - wait 30 seconds if there is a next SMS (only if current SMS is 153 chars long) 
-                // TODO WARNING: "+CMTI:" is read but not handled! ---> function SIM900waitForResponse() changed, so now its working
-                // TODO solve the problem with 153 char long SMS!!! (save last SMS id and last SMS type (sender number sent whole OR just partly) - if IDs are not equal and SMS type is just part number --> send last SMS ID)
-                if (smsMessageLength != 153 || (queuePeek() == 1 && !SIM900waitForResponse("+CMTI:", 30000, SIM900_STRING_MAX_LENGTH, handleSIM900message))) { // queuePeek() == 0 //!SIM900waitForResponse("+CMTI:", 60000, SIM900_STRING_MAX_LENGTH, handleSIM900message)
-                    // if message is uknown -> send it to admin and add the whole sender number
-                    bool unknown_message = false;
+
+
+                static char LastSMSid[sizeof(SMSid)] = {0};
+                static bool SenderNumberSent = false;
+                // last message - wait 30 seconds if there is a next SMS (only if current SMS is 153 chars long)
+                // done TODO WARNING: "+CMTI:" is read but not handled! ---> function SIM900waitForResponse() changed, so now its working
+                // done TODO solve the problem with 153 char long SMS!!! (save last SMS id and last SMS type (sender number sent whole OR just partly) - if IDs are not equal and SMS type is just part number --> send last SMS ID)
+                if (smsMessageLength != 153 || (queuePeek() == 1 && !SIM900waitForResponse("+CMTI:", 30000, SIM900_STRING_MAX_LENGTH, handleSIM900message))) {
+
+                    bool unknown_message = false; // if message is uknown -> send it to admin and add the whole sender number
+
                     if (checkWhitelist(SMSid)) {
                         Serial.println(F("ON Whitelist!"));
-                        
+
+                        // copy, trim and uppercase SMS message
                         memcpy(smsCmd, smsMessage, SIM900_STRING_MAX_LENGTH);
                         strtoupper(smsCmd);
                         trim(smsCmd);
                         Serial.print(F("<"));
                         Serial.print(smsCmd);
                         Serial.println(F(">"));
-                        
+
+                        // do CMD
                         if(strcmp(smsCmd,"BRANA") == 0) {
-                            brana(); // open the gate
+                            // open the GATE
+                            brana();
                         } else if(strcmp(smsCmd,"VRATA") == 0) {
-                            vrata(); // open the door
+                            // open the DOOR
+                            vrata();
                         } else if(strcmp(smsCmd,"CMD KREDIT") == 0) {
                             // get SIM credit status
                             CMD_CREDIT = true;
@@ -399,58 +379,52 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
                         } else {
                             unknown_message = true;
                         }
-                        
+
                     } else {
                         unknown_message = true;
                     }
-                    
-                    
-                    
+
+
                     if (unknown_message) {
-                        // TODO solve the problem with 153 char long SMS!!! (save last SMS id and last SMS type (sender number sent whole OR just partly) - if IDs are not equal and SMS type is just part number --> send last SMS ID)
+                        // done TODO solve the problem with 153 char long SMS!!! (save last SMS id and last SMS type (sender number sent whole OR just partly) - if IDs are not equal and SMS type is just part number --> send last SMS ID)
                         if (LastSMSid[0] != '\0' && strcmp(LastSMSid, SMSid) != 0 && SenderNumberSent == false) {
                             Serial.println(F("Send previous SMS sender number..."));
                             SIM900sendSMS(ADMIN_TEL_NUMBER, LastSMSid);
                             Serial.println(F("Done."));
                         }
-                    
-                        if (strlen(SMSid)+smsMessageLength > 157) { // max SMS length is 160 minus " - "
-                            
+
+                        // send SMS message and SMS sender number separately
+                        if (strlen(SMSid)+smsMessageLength > 157) { // max SMS length is 160 minus " - " (3 chars)
+
                             Serial.println(F("Send SMS message..."));
                             SIM900sendSMS(ADMIN_TEL_NUMBER, smsMessage);
                             Serial.println(F("Done."));
-                            
-                            
+
+
                             Serial.println(F("Send SMS sender number..."));
                             SIM900sendSMS(ADMIN_TEL_NUMBER, SMSid);
                             Serial.println(F("Done."));
-                        
+
+                        // send SMS message and SMS sender number together
                         } else {
-                            //char tempSMS[SIM900_STRING_MAX_LENGTH] = {0};
-                            //strcpy(tempSMS, smsMessage);
                             strcat(smsMessage, " - ");
                             strcat(smsMessage, SMSid);
-                            
-                            
+
                             Serial.println(F("Send SMS message with sender number..."));
                             SIM900sendSMS(ADMIN_TEL_NUMBER, smsMessage);
                             Serial.println(F("Done."));
                         }
-                    
-                        
                     }
-                    
+
                     SenderNumberSent = true; // previous SMS sender number sent OR command used
-                    
-                // initial (153 chars long) and NON WHITELIST messages 
+
+                // initial (153 chars long) and NON WHITELIST messages
                 } else {
                     SenderNumberSent = false;
-                  
+
                     // unknown messages - send them to admin
-                    // add a few digits from sender number
-                    
+                    // add a few digits (6) from sender number
                     int senderIDlength = strlen(SMSid);
-                    
                     smsMessage[153] = '-';
                     smsMessage[154] = SMSid[senderIDlength-6];
                     smsMessage[155] = SMSid[senderIDlength-5];
@@ -458,89 +432,52 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
                     smsMessage[157] = SMSid[senderIDlength-3];
                     smsMessage[158] = SMSid[senderIDlength-2];
                     smsMessage[159] = SMSid[senderIDlength-1];
-                    
-                    
-                    
+
                     Serial.println(F("Send SMS message with part of the sender number..."));
                     SIM900sendSMS(ADMIN_TEL_NUMBER, smsMessage);
                     Serial.println(F("Done."));
-                    
                 }
 
-                strcpy(LastSMSid, SMSid);
-                
-                
-                /*if (!checkingSMSqueue) {
-                    Serial.println(F("CHECKING TRUE!"));
-                    checkingSMSqueue = true;
-                    
-                    
-                    int i;
-                    for (i = 1; i <= SMS_QUEUE_SIZE; i++) {
-                    
-                        char tempStr[20] = {0};
-                        sprintf(tempStr, "AT+CMGR=%d", i);
-                        
-                        SIM900sendCmd(tempStr);
-                        if (SIM900waitForResponse("+CMGR:", 1500, SIM900_STRING_MAX_LENGTH, handleSIM900message)) {
-                            SIM900waitForResponse("OK", 10000, SIM900_STRING_MAX_LENGTH, handleSIM900message);//clean
-                            
-                            Serial.println(F("isInQueue!"));
-                            if (!isInQueue(i)) {
-                                Serial.println(F("Inserts!"));
-                                queueInsert(i);
-                            }
-                            
-                        } else {
-                            break;
-                        }
-                        
-                    }
-                    
-                    checkingSMSqueue = false;
-                    Serial.println(F("CHECKING DONE!"));
-                    
-                    
-                }*/
-                
-                // remove SMS from queue
+                strcpy(LastSMSid, SMSid); // copy SMS sender number to use it next time
+
+
+
+
+
+                // remove read SMS from queue
                 int sms_in_queue = queueRemove();
                 if (sms_in_queue != 0) {
                     char tempStr[20] = {0};
                     sprintf(tempStr, "AT+CMGD=%d", sms_in_queue);
                     Serial.println(tempStr);
-                    
-                    
+
                     SIM900sendCmd(tempStr);
-                    
+
                     SIM900waitForResponse("OK", SIM900_RESPONSE_TIMEOUT_DEFAULT, SIM900_STRING_MAX_LENGTH, handleSIM900message);
                     Serial.println();
                     Serial.println(F("Remove Done."));
                 }
-                
-                
-                
-                
-                // if in queue is SMS SIM900CMD read next SMS in queue
+
+
+                // if in queue is SMS read next SMS in queue
                 sms_in_queue = queuePeek();
                 if (sms_in_queue != 0) {
                     char tempStr[20] = {0};
                     Serial.println(F("NEXT SMS:"));
-                    sprintf(tempStr, "AT+CMGR=%d", sms_in_queue);
-                    
-                    
+                    snprintf(tempStr, sizeof(tempStr), "AT+CMGR=%d", sms_in_queue);
+
                     // short delay before next message (wait for random string)
                     SIM900waitForResponse(" <---> ", 5000, SIM900_STRING_MAX_LENGTH, handleSIM900message);
-                    
-                    
-                    
+
+                    // read next message
                     SIM900sendCmd(tempStr);
                     Serial.println();
                 } else {
-                    //TODO check SIM module for any SMS panding
+                    // check SIM module for any SMS panding
                     if (!checkingSMSqueue) {
                         Serial.println(F("CHECKING TRUE!"));
                         checkingSMSqueue = true;
+                        SMShandling = false;
 
 
                         SIM900sendCmd("AT+CMGL=\"ALL\"");
@@ -549,42 +486,40 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
 
                             int i;
                             for (i = 1; i <= SMS_QUEUE_SIZE; i++) {
-                            
+
                                 char tempStr[20] = {0};
                                 sprintf(tempStr, "AT+CMGR=%d", i);
-                                
+
                                 SIM900sendCmd(tempStr);
                                 if (SIM900waitForResponse("+CMGR:", 1500, SIM900_STRING_MAX_LENGTH, handleSIM900message)) {
                                     SIM900waitForResponse("OK", SIM900_RESPONSE_TIMEOUT_DEFAULT, SIM900_STRING_MAX_LENGTH, handleSIM900message);//clean
-                                    
+
                                     Serial.println(F("isInQueue!"));
                                     if (!isInQueue(i)) {
                                         Serial.println(F("Inserts!"));
                                         queueInsert(i);
                                     }
-                                    
-                                }/* else {
-                                    break;
-                                }*/
-                                
+
+                                }
+
                             }
                         }
-                                
-                        
-                        
+
+
                         checkingSMSqueue = false;
+                        SMShandling = true;
                         Serial.println(F("CHECKING DONE!"));
                     }
 
 
-                  
+
                     Serial.println(F("HANDLING FALSE!"));
-                    handlingSMS = false;
+                    SMShandling = false;
                 }
-                
-                
-                
-                // COMMANDS
+
+
+
+                // do COMMANDS
                 if(smsCmd[0] != '\0') {
                     if (CMD_CREDIT == true && strcmp(smsCmd,"CMD KREDIT") == 0) {
                         // get SIM credit status
@@ -595,450 +530,17 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
                     }
                 }
             }
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            /*
-            
-            if (checkWhitelist(SMSid)) {
-                
-                
-                
-            } else {
-                
-                
-                
-                
-                
-            }
-            */
-            
-            
-            
-            
-            
-            /*
-            
-            
-            if (checkWhitelist(SMSid)) {
-                Serial.println(F("ON Whitelist!"));
-                strtoupper(smsMessage);
-                Serial.print(F("<"));
-                Serial.print(smsMessage);
-                Serial.println(F(">"));
-                if(strcmp(smsMessage,"BRANA") == 0) {
-                    brana();
-                } else if(strcmp(smsMessage,"VRATA") == 0) {
-                    vrata();
-                } else if(strcmp(smsMessage,"CMD KREDIT") == 0) {
-                    // get SIM credit status
-                    CMD_CREDIT = true;
-                    SIM900sendCmd(SIM_CREDIT_STATUS_CMD);
-                } else if(strcmp(smsMessage,"CMD SIGNAL") == 0) {
-                    // get SIM signal status
-                    CMD_SIGNAL = true;
-                    SIM900sendCmd("AT+CSQ");
-                } else {
-                    
-                    
-                    
-                    Serial.println("Send SMS...");
-                    SIM900sendSMS(ADMIN_TEL_NUMBER, smsMessage);// TODO add sender number
-                    
-                    SIM900waitForResponse("OK", 10000, SIM900_STRING_MAX_LENGTH, NULL);
-                    Serial.println("Done.");
-                    
-                    
-                    
-                }
-                
-                
-            } else {
-                
-                
-                
-                
-                
-            }
-            
-            
-            */
-            
-            
-            
-            
-        // SMS message read and send
-        } else if(strstr(sim900outputData, "+CMGL:") == sim900outputData){
-           /* 
-            char *telnumber = strstr(sim900outputData, "\"")+1;
-            telnumber = strstr(telnumber, "\"")+1;
-            telnumber = strstr(telnumber, "\"")+1;
-            memset(SMSid, '\0', sizeof(char)*20);
-            memcpy(SMSid, telnumber, 13);
-            char smsMessage[SIM900_STRING_MAX_LENGTH] = {0};
-            SIM900readLine(smsMessage, SIM900_STRING_MAX_LENGTH);
-            int smsMessageLength = strlen(smsMessage);
-            Serial.print(F("SMS ID: "));
-            Serial.println(SMSid);
-            Serial.print(F("SMS: "));
-            Serial.print(smsMessage);
-            Serial.print(F(" ("));
-            Serial.print(smsMessageLength);
-            Serial.println(F(")"));
-            
-            SIM900waitForResponse("OK", 10000, SIM900_STRING_MAX_LENGTH, NULL);
-            Serial.println("Done.");
-            
-            
-            
-            
-            
-            if(smsMessageLength != 153 || !SIM900waitForResponse("+CMTI:", 60000, SIM900_STRING_MAX_LENGTH, handleSIM900message)) {
-            
-                //#define SMSstackSize = 10;
-                //int SMSstack[SMSstackSize] = {0};
-                //stackPush()
-                //stackPop()
-                
-                
-                
-                Serial.println("Delete SMS...");
-                SIM900.print("AT+CMGD=");
-                SIM900.println(SMS_read_index);
-                SIM900waitForResponse("OK", 10000, SIM900_STRING_MAX_LENGTH, NULL);
-                SMS_read_index++;
-                if(SMS_read_index > 10) {SMS_read_index = 1;}
-                Serial.println("Done.");
-                
-                
-                
-                
-                
-                if(checkWhitelist(SMSid)){
-                    Serial.println(F("ON Whitelist!"));
-                    strtoupper(smsMessage);
-                    Serial.print(F("<"));
-                    Serial.print(smsMessage);
-                    Serial.println(F(">"));
-                    if(strcmp(smsMessage,"BRANA") == 0) {
-                        brana();
-                    } else if(strcmp(smsMessage,"VRATA") == 0) {
-                        vrata();
-                    } else if(strcmp(smsMessage,"CMD KREDIT") == 0) {
-                        // get SIM credit status
-                        CMD_CREDIT = true;
-                        SIM900sendCmd(SIM_CREDIT_STATUS_CMD);
-                    } else if(strcmp(smsMessage,"CMD SIGNAL") == 0) {
-                        // get SIM signal status
-                        CMD_SIGNAL = true;
-                        SIM900sendCmd("AT+CSQ");
-                    } else {
-                        
-                        
-                        
-                        Serial.println("Send SMS...");
-                        SIM900sendSMS(ADMIN_TEL_NUMBER, smsMessage);// TODO add sender number
-                        
-                        SIM900waitForResponse("OK", 10000, SIM900_STRING_MAX_LENGTH, NULL);
-                        Serial.println("Done.");
-                        
-                        
-                        
-                    }
-                } else {
-                    
-                    // not on WHITELIST -> send SMS
-                    Serial.println(F("NOT on Whitelist!"));
-                    
-                    
-                        
-                        Serial.println("Send SMS...");
-                        SIM900sendSMS(ADMIN_TEL_NUMBER, smsMessage);// TODO add sender number
-                        
-                        SIM900waitForResponse("OK", 10000, SIM900_STRING_MAX_LENGTH, NULL);
-                        Serial.println("Done.");
-                        
-                        
-                        
-                }
-                
-                
-                
-                
-                // read next SMS
-                SIM900sendCmd("AT+CMGL=\"ALL\"");
-                
-            } else {
-                
-                
-                // check for new SMS
-                SIM900sendCmd("+CMTI:");
-                
-            }*/
-            
-            
-        /*
-        // SMS message received
-        } else if(strstr(sim900outputData, "+CMT:") == sim900outputData){
-            char *telnumber = strstr(sim900outputData, "\"")+1;
-            memset(SMSid, '\0', sizeof(char)*20);
-            memcpy(SMSid, telnumber, 13);
-            char smsMessage[SIM900_STRING_MAX_LENGTH] = {0};
-            SIM900readLine(smsMessage, SIM900_STRING_MAX_LENGTH);
-            int smsMessageLength = strlen(smsMessage);
-            Serial.print(F("SMS ID: "));
-            Serial.println(SMSid);
-            Serial.print(F("SMS: "));
-            Serial.print(smsMessage);
-            Serial.print(F(" ("));
-            Serial.print(smsMessageLength);
-            Serial.println(F(")"));
-            
-            char *recvtime = telnumber+13+2;
-            recvtime = strstr(recvtime, "\"")+1;
-            recvtime = strstr(recvtime, "\"")+1;
-            recvtime = strstr(recvtime, "\"")+1;
-            strstr(recvtime, "\"")[0] = '\0'; // set message end
-            Serial.print(F("RecvTime: "));
-            Serial.println(recvtime);
-            recvtime = strstr(recvtime, ":")+1;
-            recvtime = strstr(recvtime, ":")+1;
-            strstr(recvtime, "+")[0] = '\0'; // set message end
-            Serial.print(F("RecvTimeSecs: "));
-            Serial.println(recvtime);
-            
-            if(checkWhitelist(SMSid)){
-                Serial.println(F("ON Whitelist!"));
-                strtoupper(smsMessage);
-                Serial.print(F("<"));
-                Serial.print(smsMessage);
-                Serial.println(F(">"));
-                if(strcmp(smsMessage,"BRANA") == 0) {
-                    brana();
-                } else if(strcmp(smsMessage,"VRATA") == 0) {
-                    vrata();
-                } else if(strcmp(smsMessage,"CMD KREDIT") == 0) {
-                    // get SIM credit status
-                    CMD_CREDIT = true;
-                    SIM900sendCmd(SIM_CREDIT_STATUS_CMD);
-                } else if(strcmp(smsMessage,"CMD SIGNAL") == 0) {
-                    // get SIM signal status
-                    CMD_SIGNAL = true;
-                    SIM900sendCmd("AT+CSQ");
-                } else {
-                    int i;
-                    for(i = 0; i < 3; i++) {
-                        if(SMS_BUFFER[i][0] == '\0') {
-                            
-                            memcpy(SMS_BUFFER[i], smsMessage, SIM900_STRING_MAX_LENGTH);
-                            i = 3;
-                        }
-                    }
-                    
-                    if(!SIM900waitForSerialDataAvailable(30000)){
-                        for(i = 0; i < 3; i++) {
-                            if(SMS_BUFFER[i][0] != '\0') {
-                                
-                                SIM900sendSMS(ADMIN_TEL_NUMBER, SMS_BUFFER[i]);
-                                memset(SMS_BUFFER[i], '\0', SIM900_STRING_MAX_LENGTH);
-                            }
-                        }
-                    }
-                    
-                    
-                    
-                    Serial.println(F("WAITING!!!"));
-                    
-                    SIM900.print("AT+CMGW=\"");
-                    SIM900.print(ADMIN_TEL_NUMBER);
-                    SIM900.print("\"\r");
-                    SIM900.print(smsMessage);
-                    SIM900.print((char)(26));
-                    SIM900waitForResponse("OK", SIM900_RESPONSE_TIMEOUT_DEFAULT, SIM900_STRING_MAX_LENGTH, handleSIM900message);
-                    
-                    //delay(30000);
-                    
-                    
-                    /*SIM900prepareNewSMS(ADMIN_TEL_NUMBER);
-                    SIM900addSMSdata(smsMessage);
-                    SIM900sendPreparedSMS();
-                    
-                    
-                    
-                    if (SMS_waiting) {
-                        Serial.println(F("WAITING!!!"));
-                        //TODO mensi/vetsi   59 -> 00
-                        Serial.println(abs(atoi(recvtime)-SMS_last_received));
-                        Serial.println((abs(millis()-SMS_last_millis)/1000));
-                        
-                        if (abs(atoi(recvtime)-SMS_last_received) > (abs(millis()-SMS_last_millis)/1000)) {
-                            
-                            Serial.println(F("SMS continue - add message to queue"));//(same message)
-                            //SIM900addSMSdata(smsMessage);
-                            
-                        } else {
-                            //SIM900sendPreparedSMS();
-                            delay(100);
-                            //SIM900prepareNewSMS(ADMIN_TEL_NUMBER);
-                            //SIM900addSMSdata(smsMessage);
-                        
-                            Serial.println(F("SMS done - send message in the queue AND add new message to the queue")); //(different message)+delay after message is sent
-                            
-                        }
-                        SMS_waiting = false;
-                    } else {
-                        // prepare new sms()
-                        // add sms data()
-                        
-                        SIM900prepareNewSMS(ADMIN_TEL_NUMBER);
-                        SIM900addSMSdata(smsMessage);
-                        Serial.println(F("SMS prepare new"));
-                        Serial.println(F("SMS add message to queue"));
-                    }
-                    
-                    if (smsMessageLength == 153) {
-                        Serial.println(F("153!!!"));
-                        
-                        //wait for new data on SIM900 serial()
-                        
-                        
-                        
-                        char sim900outputDataTEMP[SIM900_STRING_MAX_LENGTH] = {0};
-                        
-                        
-                        
-                        while(SIM900.peek() == 'A' || SIM900.peek() == 'O' || SIM900.peek() == '>' || SIM900.peek() == -1) {
-                            if(SIM900.peek() == 'A' || SIM900.peek() == 'O' || SIM900.peek() == '>'){
-                                SIM900readLine(sim900outputDataTEMP, sizeof(sim900outputDataTEMP) - 1);
-                                Serial.println(sim900outputDataTEMP);
-                                memset(sim900outputDataTEMP, '\0', sizeof(char)*SIM900_STRING_MAX_LENGTH);
-                            }
-                            delay(33);
-                        }
-                        
-                        SIM900waitForSerialDataAvailable(5000);
-                        
-                        
-                        
-                        
-                        
-                        
-                        
-                        
-                        SMS_waiting = true;
-                        SMS_last_millis = millis();
-                        SMS_last_received = atoi(recvtime);
-                        
-                        telnumber[14] = '\0';
-                        Serial.println(F("---"));
-                        Serial.println(sim900outputData);
-                        
-                        
-                        
-                        
-                        
-                        
-                        if (SIM900readLine(sim900outputDataTEMP, sizeof(sim900outputDataTEMP) - 1)) {
-                            
-                            Serial.println(sim900outputDataTEMP);
-                            
-                            Serial.println(F("---"));
-                            if(strstr(sim900outputData, sim900outputDataTEMP) == sim900outputData && sim900outputData != NULL){// rest of message received -> handle message
-                                
-                                Serial.println(F("sms - rest received"));
-                                
-                                handleSIM900message(1, sim900outputDataTEMP);
-                                
-                            } else {// diferent type of data on serial -> send message in queue and handle new data
-                                SMS_waiting = false;
-                                
-                                SIM900sendPreparedSMS();
-                                delay(100);
-                                
-                                Serial.println(F("SMS sending 3"));
-                                
-                                handleSIM900message(1, sim900outputDataTEMP);
-                            }
-                            
-                        } else {// nothing on serial -> send message in queue
-                            SMS_waiting = false;
-                            
-                            SIM900sendPreparedSMS();
-                            delay(100);
-                            
-                            Serial.println(F("SMS sending 2"));
-                            
-                        }
-                        
-                        
-                        
-                    } else { // the message is not expected to continue -> send message in queue
-                    
-                        SIM900sendPreparedSMS();
-                        delay(100);
-                        
-                        Serial.println(F("SMS sending"));
-                        //SIM900sendSMS(ADMIN_TEL_NUMBER, smsMessage);
-                        // send sms data()
-                    }
-                    
-                    
-                    
-                    
-                    
-                }
-            } else {
-                // not on WHITELIST -> send SMS
-                Serial.println(F("NOT on Whitelist!"));
-                
-                
-                
-                // if waiting check
-                    //time curr - last > milis()-milis_last
-                    
-                    // true - add message to queue (same message)
-                    // false - send first message, add message to a new queue (different message)
-                
-                
-                if(smsMessageLength == 153) {
-                    //set waiting
-                    //save time secs + milis()
-                } else {
-                    // send
-                    //SIM900sendSMS(ADMIN_TEL_NUMBER, smsMessage);
-                //}
-            }
-        */
+
         // USSD message received
         } else if(strstr(sim900outputData, "+CUSD:") == sim900outputData){
             char *message = strstr(sim900outputData, "\"")+1;
             strstr(message, "\"")[0] = '\0'; // set message end
-            
+
             if(CMD_CREDIT){ // send SMS only if command was called by SMS
                 SIM900sendSMS(ADMIN_TEL_NUMBER, message);
                 CMD_CREDIT = false;
             }
-        
+
         // Signal status received
         } else if(strstr(sim900outputData, "+CSQ:") == sim900outputData){
             int signal_value = 0;
@@ -1124,31 +626,6 @@ int isInQueue(int value)
     return 0;
 }
 
-/*
-void pushSMSstack(int index)
-{
-    int i;
-    for (i = 0; i < SMS_STACK_SIZE; i++) {
-        if (SMSstack[i] == 0) {
-            SMSstack[i] = index;
-            i = SMS_STACK_SIZE;
-        }
-    }
-}
-
-int popSMSstack()
-{
-    int i;
-    for (i = SMS_STACK_SIZE-1; i > -1; i--) {
-        if (SMSstack[i] != 0) {
-            int index = SMSstack[i];
-            SMSstack[i] = 0;
-            return index;
-        }
-    }
-    return 0;
-}
-*/
 void strtoupper(char * str)
 {
     while(str && *str) {*(str++) = toupper((unsigned char) *str);}
@@ -1207,29 +684,29 @@ void sim900powerUpDown(int pin)
 bool sim900init()
 {
     Serial.println(F("GSM shield initialization..."));
-    
+
     // SIM900 serial
     SIM900.begin(19200);              // SIM900 default baud rate (DEFAULT: 19200)
-    
+
     SIM900.print("AT+IPR=");          // Tell the SIM900 not to autobaud
     SIM900.print(SIM900_SPEED);       // -> lower baudrate could be less power consuming
     SIM900.print("\r");               // send
     SIM900.flush();                   // wait for transmission (and in some versions of the SoftwareSerial.h removes any buffered incoming serial data ---> if not working as expected, remove this line)
-    
+
     SIM900.end();                     // disconnect SIM900 serial
-    
+
     SIM900.begin(SIM900_SPEED);       // begin SIM900 serial with the new baud rate
     SIM900.readStringUntil('\n');     // clear response from old baud rate from SIM900 serial
     SIM900flushSerial();
     SIM900.setTimeout(3000);          // Read serial timeout
-    
-    
+
+
     // SIM900 check power
     if(!SIM900checkWithCmd("AT", "OK", handleSIM900message)){
         // power ON
         Serial.println(F("Turning ON GSM shield..."));
         sim900powerUpDown(SIM900_PIN_POWER);
-        
+
         if(SIM900waitForResponse("Call Ready", SIM900_RESPONSE_TIMEOUT_DEFAULT, SIM900_STRING_MAX_LENGTH, handleSIM900message)){
             Serial.println(F("Done."));
         } else {
@@ -1237,51 +714,51 @@ bool sim900init()
             return 0;
         }
     }
-    
-    
+
+
     // check sim status
     if(!SIM900checkWithCmd("AT+CPIN?", "+CPIN: READY", handleSIM900message)){
         Serial.println(F("SIMcard ERROR!"));
         return 0;
     }
     SIM900waitForResponse("OK", 1500, SIM900_STRING_MAX_LENGTH, handleSIM900message);
-    
+
     // set full function
     if(!SIM900checkWithCmd("AT+CFUN=1", "OK", handleSIM900message)){
         Serial.println(F("Command AT+CFUN=1 ERROR!"));
         return 0;
     }
-    
+
     // set SMS to text mode (set message mode to ASCII)
     if(!SIM900checkWithCmd("AT+CMGF=1", "OK", handleSIM900message)){
         Serial.println(F("Command AT+CMGF=1 ERROR!"));
         return 0;
     }
-        
+
     // turn on SMS Message notifications (send the SMS data directly to the serial output)
     if(!SIM900checkWithCmd("AT+CNMI=2,1,0,0,0", "OK", handleSIM900message)){ //https://stackoverflow.com/questions/58908575/cnmi-command-how-to-receive-notification-and-save-to-sim-card-incoming-sms
         Serial.println(F("Command AT+CNMI=2,1,0,0,0 ERROR!")); //https://stackoverflow.com/questions/27182456/directly-read-sms-when-it-arrives-via-gsm-modem-in-pc-over-serial-communication
         return 0;
     }
-    
+
     // turn on Caller ID notifications
     if(!SIM900checkWithCmd("AT+CLIP=1", "OK", handleSIM900message)){
         Serial.println(F("Command AT+CLIP=1 ERROR!"));
         return 0;
     }
-    
+
     // delete all SMS messages
     if(!SIM900checkWithCmd("AT+CMGDA=\"DEL ALL\"", "OK", handleSIM900message)){
         Serial.println(F("Command AT+CMGDA=\"DEL ALL\" ERROR!"));
         return 0;
     }
-    
+
     // show all SMS messages
     if(!SIM900checkWithCmd("AT+CMGL=\"ALL\"", "OK", handleSIM900message)){
         Serial.println(F("Command AT+CMGL=\"ALL\" ERROR!"));
         return 0;
     }
-    
+
     // last check
     if(SIM900checkWithCmd("AT", "OK", handleSIM900message)){
         SIM900flushSerial();
@@ -1332,20 +809,21 @@ void SIM900sendSMS(const char *telNumber, const char *message)
     Serial.println(F("SMS sent: OK"));
 }
 
-bool SIM900readLine(char *outputData, unsigned int bufferLength)
+bool SIM900readLine(char *outputData, int bufferLength)
 {
     if (SIM900.available() > 0){
-        outputData[SIM900.readBytesUntil('\r', outputData, bufferLength)] = '\0'; // EOL = "\r\n"
-        //if(strlen(outputData) < bufferLength){
-        Serial.print(F("<"));
+        outputData[SIM900.readBytesUntil('\r', outputData, bufferLength-1)] = '\0'; // EOL = "\r\n"
+
+        // clear buffer - clear the remaining \r(s) and \n
+        //Serial.print(F("<"));
         char ch = 0;
         int count = 0;
-        while(SIM900.available() > 0 && ch != 10){count++; ch = (char)SIM900.read(); Serial.print(ch);}
-        Serial.print(F(">["));
-        Serial.print(count);
-        Serial.println(F("]"));
-        //Serial.print(SIM900.readStringUntil('\n')); // clear buffer - clear the remaining \r(s) and \n
-        //}
+        while(SIM900.available() > 0 && ch != 10){count++; ch = (char)SIM900.read();} //Serial.print(ch);
+        //Serial.print(F(">["));
+        //Serial.print(count);
+        //Serial.println(F("]"));
+        //Serial.print(SIM900.readStringUntil('\n'));
+
         return 1;
     }
     return 0;
@@ -1358,7 +836,7 @@ void SIM900sendCmd(const char *cmd)
     SIM900.flush(); // wait for transmission (and in some versions of the SoftwareSerial.h removes any buffered incoming serial data ---> if not working as expected, remove this line)
 }
 
-bool SIM900waitForResponse(const char *expectedResponse, unsigned int timeoutMS, unsigned int responseBufferLength, handleSIM900messageFuncPtr callbackFunctionForOtherResponses)
+bool SIM900waitForResponse(const char *expectedResponse, unsigned int timeoutMS, int responseBufferLength, handleSIM900messageFuncPtr callbackFunctionForOtherResponses)
 {
     unsigned long start_time = millis();
     char response[responseBufferLength] = {0};
@@ -1370,22 +848,12 @@ bool SIM900waitForResponse(const char *expectedResponse, unsigned int timeoutMS,
                 callbackFunctionForOtherResponses(isEOLread, response);
             }
             if(strstr(response, expectedResponse) == response) {
-            //if(strcmp(expectedResponse, response) != 0) {
                 return 1;
             }
-            /*if(strstr(response, expectedResponse) != response) {
-            //if(strcmp(expectedResponse, response) != 0) {
-                if(callbackFunctionForOtherResponses != NULL){
-                    callbackFunctionForOtherResponses(isEOLread, response);
-                }
-            } else {
-                return 1;
-            }*/
         }
         delay(33);
     }
-    return (strstr(response, expectedResponse) == response);// response[0] != '\0' && expectedResponse != NULL &&  (millis()-start_time < timeoutMS)
-    //return (strcmp(expectedResponse, response) == 0);//(millis()-start_time < timeoutMS)
+    return (strstr(response, expectedResponse) == response);
 }
 
 bool SIM900checkWithCmd(const char *cmd, const char *expectedResponse, handleSIM900messageFuncPtr callbackFunctionForOtherResponses)
