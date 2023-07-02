@@ -1,13 +1,13 @@
 /**
  * @file SIM900_loop.ino
- * 
+ *
  * @brief Arduino with SIM900 shield example with basic loop
  * @date 2019-06-23
  * @author F3lda
  * @update 2023-06-23
  */
 
-/********************************************************************* 
+/*********************************************************************
 *
 * AT COMMANDS - source: https://m2msupport.net/m2msupport/at-command/
 *
@@ -91,7 +91,7 @@ ATD<number>;               dial number (ATD*125*#; - credit status (get from you
 
 AT+CMGS=\"<number>\"\r     send SMS - returns OK or ERROR
 [wait for ">"]             (AT+CMGS="<number>"<CR><message><ASCII-CHAR-26>) - Concatenated SMS - https://en.wikipedia.org/wiki/Concatenated_SMS
-<message><ASCII-CHAR-26>   
+<message><ASCII-CHAR-26>
 
 AT+CMSS=<index>,"<number>" send SMS stored on the INDEX to the NUMBER
 AT+CMGR=<index>            read SMS stored on the INDEX
@@ -124,15 +124,15 @@ void setup()
     Serial.begin(9600);               // Arduino USB serial baud rate
     Serial.print("\r");               // Print carriage return (return to left margin) and...
     Serial.flush();                   // ...wait until it's written (wait for serial port to connect)
-    
-    
+
+
     // SIM900 setup pins
     pinMode(SIM900_PIN_RX, INPUT);
     pinMode(SIM900_PIN_TX, OUTPUT);
     pinMode(SIM900_PIN_POWER, OUTPUT);
     digitalWrite(SIM900_PIN_POWER, LOW);
 
-    
+
     // SIM900 serial
     SIM900.begin(19200);              // SIM900 default baud rate (DEFAULT: 19200)
 
@@ -140,13 +140,13 @@ void setup()
     SIM900.print(SIM900_SPEED);       // -> lower baudrate could be less power consuming
     SIM900.print("\r");               // Send
     SIM900.flush();                   // wait for transmission
-    
+
     SIM900.end();                     // disconnect SIM900 serial
-    
+
     SIM900.begin(SIM900_SPEED);       // begin SIM900 serial with the new baud rate
     SIM900.readStringUntil('\n');     // clear response from old baud rate from SIM900 serial
-    
-    
+
+
     // SIM900 AT handshake
     SIM900.print("AT\r");             // if everything works, should return OK on USB serial (else SIM900 shield might be powered OFF)
     Serial.println("Arduino ready! Waiting for SIM900 to response:");
@@ -176,7 +176,7 @@ void loop()
         }
         Serial.println("["+str+"]("+str.length()+")");
     }*/
-    
+
     // Read data from USB serial
     if (Serial.available() > 0){
         String input = Serial.readStringUntil('\n');

@@ -1,6 +1,6 @@
 /**
  * @file telnumwhitelist.h
- * 
+ *
  * @brief Whitelist of tel. numbers allowed to open gates
  * @date 2023-06-23
  * @author F3lda
