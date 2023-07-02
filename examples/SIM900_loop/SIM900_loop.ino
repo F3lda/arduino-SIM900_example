@@ -41,7 +41,7 @@ GENERAL INFO
 ------------
 ATS3?                      get Command Line Termination Character
 AT+CPIN?                   sim is ready (returns "+CPIN: READY" and "OK")
-AT+CREG?                   network is registered
+AT+CREG?                   network is registered (returns "+CREG: 0,1" and "OK")
 AT+CPAS                    GSM module status
   Status result codes:
     0: ready
