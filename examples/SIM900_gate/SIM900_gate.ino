@@ -4,7 +4,7 @@
  * @brief Arduino with SIM900 shield example used to open gates
  * @date 2019-06-23
  * @author F3lda
- * @update 2023-07-02
+ * @update 2023-07-03
  */
 
 // SIM900 GSM Shield example
@@ -850,7 +850,7 @@ bool SIM900readLine(char *outputData, int bufferLength)
     if (SIM900.available() > 0){
         outputData[SIM900.readBytesUntil('\r', outputData, bufferLength-1)] = '\0'; // EOL = "\r\n"
         //trim(outputData);
-        
+
         // clear buffer - clear the remaining \r(s) and \n
         //Serial.print(F("<"));
         char ch = 0;
