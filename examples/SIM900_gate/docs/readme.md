@@ -29,7 +29,8 @@
     <br><img src="9.jpg" alt="Powering" width="50%" height="50%">
     <br>I also replaced original antena with one from 433MHz kit.
     <br><img src="10.jpg" alt="Powering" width="20%" height="20%">
-    <br>Adding capacitor should help too.
+    <br>And added two capacitors (330uF and 100nF).
+    <br><img src="11.jpg" alt="Powering" width="20%" height="20%">
   </li>
   <li>Download the code, edit and run</li>
 </ol>
