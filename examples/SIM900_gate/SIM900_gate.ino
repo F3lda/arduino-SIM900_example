@@ -12,7 +12,7 @@
 // libraries
 #include <SoftwareSerial.h>
 #include <MemoryFree.h>
-#include <avr/wdt.h> //https://create.arduino.cc/projecthub/rafitc/what-is-watchdog-timer-fffe20
+#include <avr/wdt.h>
 #include "telnumswhitelist.h"
 
 // General
@@ -157,7 +157,7 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
 {
     // skip empty lines
     if(sim900outputData[0] != '\0'){
-        trim(sim900outputData);
+        //trim(sim900outputData);
 
         Serial.print(F("["));
         Serial.print(sim900outputData);
@@ -178,6 +178,7 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
 
         // the datetime received (check RESET)
         if(strstr(sim900outputData, "+CCLK:") == sim900outputData){
+            SIM900waitForResponse("OK", SIM900_RESPONSE_TIMEOUT_DEFAULT, SIM900_STRING_MAX_LENGTH, handleSIM900message);
             static char lastResetDay[3] = "00"; // reset arduino every day (when day in date changes)
 
             Serial.print(F("Last DAY: "));
@@ -848,7 +849,8 @@ bool SIM900readLine(char *outputData, int bufferLength)
 {
     if (SIM900.available() > 0){
         outputData[SIM900.readBytesUntil('\r', outputData, bufferLength-1)] = '\0'; // EOL = "\r\n"
-
+        //trim(outputData);
+        
         // clear buffer - clear the remaining \r(s) and \n
         //Serial.print(F("<"));
         char ch = 0;
