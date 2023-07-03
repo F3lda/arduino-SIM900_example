@@ -1,5 +1,5 @@
 /**
- * @file SIM900_loop.ino
+ * @file SIM900_gate.ino
  *
  * @brief Arduino with SIM900 shield example used to open gates
  * @date 2019-06-23
