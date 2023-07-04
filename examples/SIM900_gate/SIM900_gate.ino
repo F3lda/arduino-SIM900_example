@@ -4,7 +4,7 @@
  * @brief Arduino with SIM900 shield example used to open gates
  * @date 2019-06-23
  * @author F3lda
- * @update 2023-07-03
+ * @update 2023-07-04
  */
 
 // SIM900 GSM Shield example
@@ -34,7 +34,7 @@ int queue_rear = -1;
 int queue_front = -1;
 
 // Relays
-#define RELAY_TIMEOUT 180000 // = 1000*60*3 (3 minutes)
+#define RELAY_TIMEOUT 30000 // = 1000*30 (30 secs)
 #define pinGate 2
 #define pinDoor 3
 #define pinController 4
@@ -106,7 +106,7 @@ void loop()
     // receive USB serial data
     if (Serial.available() > 0){
         char serialChars[SIM900_STRING_MAX_LENGTH] = {0};
-        int charsRead = Serial.readBytesUntil('\n', serialChars, sizeof(serialChars) - 1);
+        int charsRead = Serial.readBytesUntil('\n', serialChars, sizeof(serialChars)-1);
         Serial.print(F("<"));
         Serial.print(serialChars);
         Serial.print(F(">"));
@@ -157,8 +157,6 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
 {
     // skip empty lines
     if(sim900outputData[0] != '\0'){
-        //trim(sim900outputData);
-
         Serial.print(F("["));
         Serial.print(sim900outputData);
         Serial.print(F("]"));
@@ -851,15 +849,17 @@ bool SIM900readLine(char *outputData, int bufferLength)
         outputData[SIM900.readBytesUntil('\r', outputData, bufferLength-1)] = '\0'; // EOL = "\r\n"
         //trim(outputData);
 
-        // clear buffer - clear the remaining \r(s) and \n
-        //Serial.print(F("<"));
+        // clear buffer - clear the remaining \r(s) and \n - same as SIM900.readStringUntil('\n');
         char ch = 0;
-        int count = 0;
-        while(SIM900.available() > 0 && ch != 10){count++; ch = (char)SIM900.read();} //Serial.print(ch);
-        //Serial.print(F(">["));
-        //Serial.print(count);
-        //Serial.println(F("]"));
-        //Serial.print(SIM900.readStringUntil('\n'));
+        unsigned long start_time = millis();
+        while(millis()-start_time < 1000){
+            if(SIM900.available() > 0 && ch != '\n'){
+                ch = (char)SIM900.read();
+            } else if (ch == '\n') {
+                break;
+            }
+            delay(1);
+        }
 
         return 1;
     }
