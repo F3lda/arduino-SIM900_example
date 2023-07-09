@@ -390,6 +390,8 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
                             Serial.println(F("CMD - REMOVE ALL SMS MESSAGES!"));
                             SIM900checkWithCmd("AT+CMGDA=\"DEL ALL\"", "OK", handleSIM900message);
                             queueClear();
+                        } else if(strcmp(smsCmd,"CMD TRY") == 0) {
+                            // does nothing - retry CMD again when SMS not read
                         } else {
                             unknown_message = true;
                         }
