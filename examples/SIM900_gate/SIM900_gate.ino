@@ -4,7 +4,7 @@
  * @brief Arduino with SIM900 shield example used to open gates
  * @date 2019-06-23
  * @author F3lda
- * @update 2023-07-04
+ * @update 2023-07-09
  */
 
 // SIM900 GSM Shield example
@@ -19,6 +19,7 @@
 #define SIM900_STRING_MAX_LENGTH 164 // 164 -> max SMS size = 160 chars (153 <message> + 7 <joining data> OR 160 <only one message> --- https://stackoverflow.com/a/28029200)
 #define SIM900_RESPONSE_TIMEOUT_DEFAULT 15000 // 15 seconds
 #define SMS_QUEUE_SIZE 10 // AT+CMGD=? -> get size of the SMS storage
+#define SMS_HANDLING_MAX_TIME 60000 // 1 minute
 #define SIM_CREDIT_STATUS_CMD "ATD*125*#;" // Dial *125*#
 
 // SIM900
@@ -169,9 +170,11 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
 
         static int RINGcount = 0;
         static bool SMShandling = false;
+        static unsigned long SMShandlingTimestamp = 0;
 
         static bool CMD_CREDIT = false;
         static bool CMD_SIGNAL = false;
+        static bool CMD_RESET = false;
 
 
         // the datetime received (check RESET)
@@ -183,7 +186,7 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
             Serial.println(lastResetDay);
 
             char *datetime = strstr(sim900outputData, "\"");
-            if((datetime != NULL) && !(lastResetDay[0] == '0' && lastResetDay[1] == '0') && (lastResetDay[0] != datetime[7] || lastResetDay[1] != datetime[8])){
+            if(((datetime != NULL) && !(lastResetDay[0] == '0' && lastResetDay[1] == '0') && (lastResetDay[0] != datetime[7] || lastResetDay[1] != datetime[8])) || CMD_RESET){
 
                 // TIME TO RESET - Resetart ALL devices
                 Serial.println(F("Time to RESET Arduino!"));
@@ -289,13 +292,18 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
 
 
             // if not already handling other sms -> start with the current new one
-            if (!SMShandling) {
-                Serial.println(F("HANDLING TRUE!"));
+            if (!SMShandling || millis()-SMShandlingTimestamp > SMS_HANDLING_MAX_TIME) {
+                if (SMShandling && millis()-SMShandlingTimestamp > SMS_HANDLING_MAX_TIME) {
+                    Serial.println(F("REHANDLING TRUE!"));
+                } else {
+                    Serial.println(F("HANDLING TRUE!"));
+                }
                 SMShandling = true;
 
                 char tempStr[20] = {0};
                 snprintf(tempStr, sizeof(tempStr), "AT+CMGR=%d", new_sms_index);
                 SIM900sendCmd(tempStr);
+                SMShandlingTimestamp = millis();
             }
 
             Serial.println(F("New SMS received - done"));
@@ -374,6 +382,14 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
                         } else if(strcmp(smsCmd,"CMD SIGNAL") == 0) {
                             // get SIM signal status
                             CMD_SIGNAL = true;
+                        } else if(strcmp(smsCmd,"CMD RESET") == 0) {
+                            // restart Arduino and SIM module
+                            CMD_RESET = true;
+                        } else if(strcmp(smsCmd,"CMD CLEAR") == 0) {
+                            // delete all SMS messages
+                            Serial.println(F("CMD - REMOVE ALL SMS MESSAGES!"));
+                            SIM900checkWithCmd("AT+CMGDA=\"DEL ALL\"", "OK", handleSIM900message);
+                            queueClear();
                         } else {
                             unknown_message = true;
                         }
@@ -452,7 +468,7 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
                     SIM900sendCmd(tempStr);
 
                     SIM900waitForResponse("OK", SIM900_RESPONSE_TIMEOUT_DEFAULT, SIM900_STRING_MAX_LENGTH, handleSIM900message);
-                    Serial.println();
+                    
                     Serial.println(F("Remove Done."));
                 }
 
@@ -469,7 +485,7 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
 
                     // read next message
                     SIM900sendCmd(tempStr);
-                    Serial.println();
+                    SMShandlingTimestamp = millis();
                 } else {
                     // check SIM module for any SMS panding
                     if (!checkingSMSqueue) {
@@ -525,6 +541,9 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
                     } else if(CMD_SIGNAL == true && strcmp(smsCmd,"CMD SIGNAL") == 0) {
                         // get SIM signal status
                         SIM900sendCmd("AT+CSQ");
+                    } else if(CMD_RESET == true && strcmp(smsCmd,"CMD RESET") == 0) {
+                        // restart Arduino and SIM module
+                        SIM900sendCmd("AT+CCLK?");
                     }
                 }
             }
@@ -622,6 +641,11 @@ int isInQueue(int value)
         }
     }
     return 0;
+}
+
+void queueClear()
+{
+    while(queueRemove() != 0);
 }
 
 void strtoupper(char * str)
@@ -801,6 +825,9 @@ int sim900checkStatus()
         Serial.println(F("Mobile network registered: ERROR!"));
         errorCount++;
     }
+
+    // get SIM900 signal
+    SIM900sendCmd("AT+CSQ");
 
     return errorCount;
 }
