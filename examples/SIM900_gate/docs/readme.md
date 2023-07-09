@@ -31,6 +31,9 @@
     <br><img src="10.jpg" alt="Powering" width="20%" height="20%">
     <br>And added two capacitors (330uF and 100nF).
     <br><img src="11.jpg" alt="Powering" width="20%" height="20%">
+    <br>C=I*t/U
+    <br>C=2A*0.0006s/5V (for 0.0006 second SIM900 module takes 2 Amps - from datasheet)
+    <br>C=0,00024=240uF (<- this should be the capacitor minimum value)
   </li>
   <li>Download the code, edit and run</li>
 </ol>
@@ -40,3 +43,4 @@
 - https://electronics.stackexchange.com/questions/123240/powering-sim-900-gsm
 - https://industruino.com/page/wdt
 - https://electronics.stackexchange.com/questions/102293/i-need-to-replace-this-button-in-this-circuit-board-with-a-relay
+- https://www.laskakit.cz/user/related_files/gsm_manual_sim900_hardware_design_v2.pdf
