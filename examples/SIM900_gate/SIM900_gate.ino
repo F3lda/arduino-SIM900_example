@@ -47,8 +47,7 @@ void handleSIM900message(bool isEOLread, char *sim900outputData);
 bool checkWhitelist(char *telNumber);
 void strtoupper(char *str);
 void trim(char * str);
-void brana();
-void vrata();
+void relayPush(int outputPin);
 
 /************************************************ CUSTOM FUNCTIONS ****************************************************/
 
@@ -120,6 +119,10 @@ void loop()
             SIM900.print((char)(26));
         } else if(strcmp(serialChars,"STATUS") == 0) {
             sim900checkStatus();
+        } else if(strcmp(serialChars,"BRANA") == 0) {
+            relayPush(pinGate); // open the GATE
+        } else if(strcmp(serialChars,"VRATA") == 0) {
+            relayPush(pinDoor); // open the DOOR
         } else {
             SIM900sendCmd(serialChars);
         }
@@ -271,7 +274,7 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
                 RINGcount = 0;
 
                 // do something
-                brana();
+                relayPush(pinGate); // open the GATE
             }
 
         // incomming call - finished by caller
@@ -372,10 +375,10 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
                         // do CMD
                         if(strcmp(smsCmd,"BRANA") == 0) {
                             // open the GATE
-                            brana();
+                            relayPush(pinGate);
                         } else if(strcmp(smsCmd,"VRATA") == 0) {
                             // open the DOOR
-                            vrata();
+                            relayPush(pinDoor);
                         } else if(strcmp(smsCmd,"CMD KREDIT") == 0) {
                             // get SIM credit status
                             CMD_CREDIT = true;
@@ -470,7 +473,7 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
                     SIM900sendCmd(tempStr);
 
                     SIM900waitForResponse("OK", SIM900_RESPONSE_TIMEOUT_DEFAULT, SIM900_STRING_MAX_LENGTH, handleSIM900message);
-                    
+
                     Serial.println(F("Remove Done."));
                 }
 
@@ -667,26 +670,14 @@ void trim(char * str)
     if (front != str) {memcpy(str, front, back-front+1);}
 }
 
-void brana()
+void relayPush(int outputPin)
 {
     static unsigned long relay_pause_time = millis()-RELAY_TIMEOUT-1;
     if(millis()-relay_pause_time > RELAY_TIMEOUT){
         Serial.println(F("BRANA"));
-        digitalWrite(pinGate, LOW);
+        digitalWrite(outputPin, LOW);
         delay(1500);
-        digitalWrite(pinGate, HIGH);
-        relay_pause_time = millis();
-    }
-}
-
-void vrata()
-{
-    static unsigned long relay_pause_time = millis()-RELAY_TIMEOUT-1;
-    if(millis()-relay_pause_time > RELAY_TIMEOUT){
-        Serial.println(F("VRATA"));
-        digitalWrite(pinDoor, LOW);
-        delay(1500);
-        digitalWrite(pinDoor, HIGH);
+        digitalWrite(outputPin, HIGH);
         relay_pause_time = millis();
     }
 }
