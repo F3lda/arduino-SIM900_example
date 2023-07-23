@@ -4,7 +4,7 @@
  * @brief Arduino with SIM900 shield example used to open gates
  * @date 2019-06-23
  * @author F3lda
- * @update 2023-07-09
+ * @update 2023-07-23
  */
 
 // SIM900 GSM Shield example
@@ -38,7 +38,6 @@ int queue_front = -1;
 #define RELAY_TIMEOUT 30000 // = 1000*30 (30 secs)
 #define pinGate 2
 #define pinDoor 3
-#define pinController 4
 
 /************************************************ FUNCTIONS ****************************************************/
 
@@ -62,7 +61,7 @@ void SIM900sendPreparedSMS();
 void SIM900sendSMS(const char *telNumber, const char *message);
 bool SIM900readLine(char *outputData, int bufferLength);
 void SIM900sendCmd(const char *cmd);
-typedef void (*handleSIM900messageFuncPtr)(bool, char*); // create a type to point to a funciton
+typedef void (*handleSIM900messageFuncPtr)(bool, char*); // create a type to point to a function
 bool SIM900waitForResponse(const char *expectedResponse, unsigned int timeoutMS, int responseBufferLength, handleSIM900messageFuncPtr callbackFunctionForOtherResponses);
 bool SIM900checkWithCmd(const char *cmd, const char *expectedResponse, handleSIM900messageFuncPtr callbackFunctionForOtherResponses);
 bool SIM900waitForSerialDataAvailable(unsigned int timeoutMS);
@@ -89,8 +88,6 @@ void setup()
     digitalWrite(pinGate, HIGH);
     pinMode(pinDoor, OUTPUT);
     digitalWrite(pinDoor, HIGH);
-    pinMode(pinController, OUTPUT);
-    digitalWrite(pinController, HIGH);
 
 
     Serial.println(F("Arduino is ready!"));
@@ -193,8 +190,6 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
 
                 // TIME TO RESET - Resetart ALL devices
                 Serial.println(F("Time to RESET Arduino!"));
-                Serial.println(F("Turning OFF Gate remote controller..."));
-                digitalWrite(pinController, LOW);
 
                 Serial.println(F("Turning OFF GSM shield..."));
                 // SIM900 check power
