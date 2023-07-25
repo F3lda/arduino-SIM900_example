@@ -60,6 +60,7 @@ void relayPush(int outputPin);
 
 void sim900powerUpDown(int pin);
 bool sim900init();
+int sim900checkStatus();
 
 /************************************************ BASIC FUNCTIONS ****************************************************/
 
