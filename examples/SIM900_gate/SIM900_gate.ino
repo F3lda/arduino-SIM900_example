@@ -4,7 +4,7 @@
  * @brief Arduino with SIM900 shield example used to open gates
  * @date 2019-06-23
  * @author F3lda
- * @update 2023-07-23
+ * @update 2023-07-25
  */
 
 // SIM900 GSM Shield example
@@ -146,7 +146,7 @@ void sim900loop()
     if(handshakeSIM900counter > 30*60*15){ // handshake with SIM900 Shield about every 15 minutes
         handshakeSIM900counter = 0;
 
-        // check time to restart
+        // check the time to restart
         SIM900sendCmd("AT+CCLK?");
 
     } else {
@@ -188,7 +188,7 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
             char *datetime = strstr(sim900outputData, "\"");
             if(((datetime != NULL) && !(lastResetDay[0] == '0' && lastResetDay[1] == '0') && (lastResetDay[0] != datetime[7] || lastResetDay[1] != datetime[8])) || CMD_RESET){
 
-                // TIME TO RESET - Resetart ALL devices
+                // TIME TO RESET - Restart ALL devices
                 Serial.println(F("Time to RESET Arduino!"));
 
                 Serial.println(F("Turning OFF GSM shield..."));
@@ -236,10 +236,16 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
 
         // incomming call - caller ID
         } else if(strstr(sim900outputData, "+CLIP:") == sim900outputData){
-            char *telnumber = strstr(sim900outputData, "\"")+1; // TODO check NULL
-            char CALLERid[20] = {0};
-            memset(CALLERid, '\0', sizeof(CALLERid));
-            memcpy(CALLERid, telnumber, 13);// OR until the " char
+            char CALLERid[20] = "(NULL)";
+            char *telnumber = strstr(sim900outputData, "\"")+1;
+            if(telnumber != NULL) {
+                char *telnumberend = strstr(telnumber, "\",");
+                if(telnumberend != NULL) {
+                    telnumberend[0] = '\0';
+                    snprintf(CALLERid, sizeof(CALLERid), "%s", telnumber);
+                }
+            }
+
 
             Serial.print(F("CALLER ID: "));
             Serial.println(CALLERid);
@@ -316,11 +322,15 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
                 Serial.println(F("READING SMS!"));
 
                 // get SMS sender tel number
-                char *telnumber = strstr(sim900outputData, ",\"")+2; // TODO check NULL
-                char SMSid[20] = {0};
-                memset(SMSid, '\0', sizeof(SMSid));
-                strstr(telnumber, "\",\"")[0] = '\0';
-                snprintf(SMSid, sizeof(SMSid), "%s", telnumber);
+                char SMSid[20] = "(NULL)";
+                char *telnumber = strstr(sim900outputData, ",\"")+2;
+                if(telnumber != NULL) {
+                    char *telnumberend = strstr(telnumber, "\",\"");
+                    if(telnumberend != NULL) {
+                        telnumberend[0] = '\0';
+                        snprintf(SMSid, sizeof(SMSid), "%s", telnumber);
+                    }
+                }
 
                 // get SMS text
                 char smsMessage[SIM900_STRING_MAX_LENGTH] = {0};
@@ -669,7 +679,8 @@ void relayPush(int outputPin)
 {
     static unsigned long relay_pause_time = millis()-RELAY_TIMEOUT-1;
     if(millis()-relay_pause_time > RELAY_TIMEOUT){
-        Serial.println(F("BRANA"));
+        Serial.print(F("RELAY PIN: "));
+        Serial.println(outputPin);
         digitalWrite(outputPin, LOW);
         delay(1500);
         digitalWrite(outputPin, HIGH);
@@ -745,7 +756,7 @@ bool sim900init()
         return 0;
     }
 
-    // turn on SMS Message notifications (send the SMS data directly to the serial output)
+    // turn on SMS Message notifications (send only new SMS notification -> don't send the SMS data directly to the serial output)
     if(!SIM900checkWithCmd("AT+CNMI=2,1,0,0,0", "OK", handleSIM900message)){ //https://stackoverflow.com/questions/58908575/cnmi-command-how-to-receive-notification-and-save-to-sim-card-incoming-sms
         Serial.println(F("Command AT+CNMI=2,1,0,0,0 ERROR!")); //https://stackoverflow.com/questions/27182456/directly-read-sms-when-it-arrives-via-gsm-modem-in-pc-over-serial-communication
         return 0;
