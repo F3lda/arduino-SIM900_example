@@ -31,8 +31,8 @@ SoftwareSerial SIM900 = SoftwareSerial(SIM900_PIN_RX, SIM900_PIN_TX); // RX, TX
 
 // SMS queue
 int SMS_QUEUE_ARRAY[SMS_QUEUE_SIZE] = {0};
-int queue_rear = -1;
 int queue_front = -1;
+int queue_rear = -1;
 
 // Relays
 #define RELAY_TIMEOUT 30000 // = 1000*30 (30 secs)
@@ -44,6 +44,14 @@ int queue_front = -1;
 void sim900loop();
 void handleSIM900message(bool isEOLread, char *sim900outputData);
 bool checkWhitelist(char *telNumber);
+
+int queueLength();
+int queueInsert(int value);
+int queuePeek();
+int queueRemove();
+int isInQueue(int value);
+void queueClear();
+
 void strtoupper(char *str);
 void trim(char * str);
 void relayPush(int outputPin);
@@ -470,7 +478,7 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
 
                 // remove read SMS from queue
                 int sms_in_queue = queueRemove();
-                if (sms_in_queue != 0) {
+                if (sms_in_queue != -1) {
                     char tempStr[20] = {0};
                     sprintf(tempStr, "AT+CMGD=%d", sms_in_queue);
                     Serial.println(tempStr);
@@ -485,7 +493,7 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
 
                 // if in queue is SMS read next SMS in queue
                 sms_in_queue = queuePeek();
-                if (sms_in_queue != 0) {
+                if (sms_in_queue != -1) {
                     char tempStr[20] = {0};
                     Serial.println(F("NEXT SMS:"));
                     snprintf(tempStr, sizeof(tempStr), "AT+CMGR=%d", sms_in_queue);
@@ -609,23 +617,45 @@ bool checkWhitelist(char *telNumber)
     return false;
 }
 
+int queueLength()
+{
+    if (queue_front == -1 && queue_rear == -1) {
+        return 0;
+    } else if (queue_front == queue_rear) {
+        return 1;
+    } else if (queue_front < queue_rear) {
+        return (queue_rear-queue_front)+1;
+    } else if (queue_front > queue_rear) {
+        return (SMS_QUEUE_SIZE-queue_front)+queue_rear+1;
+    }
+    return -1;
+}
+
 int queueInsert(int value)
 {
-    if (queue_rear == SMS_QUEUE_SIZE - 1) {
-        return 0;
+    if (queueLength() == SMS_QUEUE_SIZE) {
+        return -1;
     } else {
-        if (queue_front == -1) {
+        if (queueLength() == 0) {
             queue_front = 0;
+            queue_rear = 0;
+        } else {
+            if (queue_rear+1 == SMS_QUEUE_SIZE) {
+                queue_rear = 0;
+            } else {
+                queue_rear++;
+            }
         }
-        SMS_QUEUE_ARRAY[++queue_rear] = value;
-        return value;
+        SMS_QUEUE_ARRAY[queue_rear] = value;
+
+        return 1;
     }
 }
 
 int queuePeek()
 {
-    if (queue_front == -1 || queue_front > queue_rear) {
-        return 0;
+    if (queueLength() == 0) {
+        return -1;
     } else {
         return SMS_QUEUE_ARRAY[queue_front];
     }
@@ -633,20 +663,38 @@ int queuePeek()
 
 int queueRemove()
 {
-    if (queue_front == -1 || queue_front > queue_rear) {
-        return 0;
+    if (queueLength() == 0) {
+        return -1;
     } else {
-        return SMS_QUEUE_ARRAY[queue_front++];
+        int value = SMS_QUEUE_ARRAY[queue_front];
+        if (queueLength() == 1) {
+            queue_front = -1;
+            queue_rear = -1;
+        } else {
+            if (queue_front+1 == SMS_QUEUE_SIZE) {
+                queue_front = 0;
+            } else {
+                queue_front++;
+            }
+        }
+
+        return value;
     }
 }
 
 int isInQueue(int value)
 {
-    if (queue_front != - 1){
+    if (queueLength() != 0) {
         int i;
-        for (i = queue_front; i <= queue_rear; i++) {
-            if (SMS_QUEUE_ARRAY[i] == value) {
-                return 1;
+        for (i = queue_front; i < queueLength()+queue_front; i++) {
+            if (i >= SMS_QUEUE_SIZE) {
+                if (SMS_QUEUE_ARRAY[i-SMS_QUEUE_SIZE] == value) {
+                    return 1;
+                }
+            } else {
+                if (SMS_QUEUE_ARRAY[i] == value) {
+                    return 1;
+                }
             }
         }
     }
@@ -655,7 +703,8 @@ int isInQueue(int value)
 
 void queueClear()
 {
-    while(queueRemove() != 0);
+    queue_front = -1;
+    queue_rear = -1;
 }
 
 void strtoupper(char * str)
