@@ -29,10 +29,12 @@ Opening gates and door using mobile calls and SMS messages.
     <br><img src="10.jpg" alt="Gate controller physical buttons" width="50%" height="50%">
   </li>
   <li>Powering
-    <br>I had some problems with low power so I end up with 5V to Arduino shield and GSM shield and a 2A usb charger.
+    <br>I had some problems with low power so I end up with 5 Volt 2 Amp USB charger.
+	<br><img src="14.jpg" alt="Powering" width="50%" height="50%">
+	<br>Arduino shield si powered by 12 Volts (because of relays) and GSM shield with 5 Volts.
     <br><img src="12.jpg" alt="Powering" width="50%" height="50%">
     <br>I also replaced original antena.
-    <br>And added two capacitors (330uF and 100nF).
+    <br>And added two capacitors (330uF and 100nF) to GSM shield.
     <br><img src="11.jpg" alt="Powering Capacitors" width="20%" height="20%">
     <br>C=I*t/U
     <br>C=2A*0.0006s/5V (for 0.0006 second SIM900 module takes 2 Amps - from datasheet)
@@ -50,3 +52,4 @@ Opening gates and door using mobile calls and SMS messages.
 - https://industruino.com/page/wdt
 - https://electronics.stackexchange.com/questions/102293/i-need-to-replace-this-button-in-this-circuit-board-with-a-relay
 - https://www.laskakit.cz/user/related_files/gsm_manual_sim900_hardware_design_v2.pdf
+- https://www.instructables.com/Powering-Arduino-with-a-Battery/
