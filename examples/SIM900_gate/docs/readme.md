@@ -30,8 +30,8 @@ Opening gates and door using mobile calls and SMS messages.
   </li>
   <li>Powering
     <br>I had some problems with low power so I end up with 5 Volt 2 Amp USB charger.
-	<br><img src="14.jpg" alt="Powering" width="50%" height="50%">
-	<br>Arduino shield si powered by 12 Volts (because of relays) and GSM shield with 5 Volts.
+    <br><img src="14.jpg" alt="Powering" width="50%" height="50%">
+    <br>Arduino shield is powered by 12 Volts (because of relays - If supplied with less than 7V, the 5V pin may supply less than five volts and the board may be unstable.) and GSM shield by 5 Volts.
     <br><img src="12.jpg" alt="Powering" width="50%" height="50%">
     <br>I also replaced original antena.
     <br>And added two capacitors (330uF and 100nF) to GSM shield.
@@ -53,3 +53,4 @@ Opening gates and door using mobile calls and SMS messages.
 - https://electronics.stackexchange.com/questions/102293/i-need-to-replace-this-button-in-this-circuit-board-with-a-relay
 - https://www.laskakit.cz/user/related_files/gsm_manual_sim900_hardware_design_v2.pdf
 - https://www.instructables.com/Powering-Arduino-with-a-Battery/
+- https://www.elecrow.com/wiki/index.php?title=GPRS/GSM_Shield_v1.0
