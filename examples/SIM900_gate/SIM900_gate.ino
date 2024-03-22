@@ -18,6 +18,7 @@
 // General
 #define SIM900_STRING_MAX_LENGTH 164 // 164 -> max SMS size = 160 chars (153 <message> + 7 <joining data> OR 160 <only one message> --- https://stackoverflow.com/a/28029200)
 #define SIM900_RESPONSE_TIMEOUT_DEFAULT 15000 // 15 seconds
+#define SMS_MAX_LENGTH 160 // HEX SMS is encoded in: UTF-16 big-endian (https://string-o-matic.com/hex-decode)
 #define SMS_QUEUE_SIZE 10 // AT+CMGD=? -> get size of the SMS storage
 #define SMS_HANDLING_MAX_TIME 60000 // 1 minute
 #define SIM_CREDIT_STATUS_CMD "ATD*125*#;" // Dial *125*#
@@ -343,7 +344,7 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
 
                 // get SMS text
                 char smsMessage[SIM900_STRING_MAX_LENGTH] = {0};
-                SIM900readLine(smsMessage, SIM900_STRING_MAX_LENGTH);
+                SIM900readLine(smsMessage, SMS_MAX_LENGTH+1);
                 int smsMessageLength = strlen(smsMessage);
 
                 Serial.print(F("SMS ID: "));
@@ -925,17 +926,46 @@ bool SIM900readLine(char *outputData, int bufferLength)
         outputData[SIM900.readBytesUntil('\r', outputData, bufferLength-1)] = '\0'; // EOL = "\r\n"
         //trim(outputData);
 
+        // TODO maybe - return overflow data - return 1 -> no overflow data; return 0 -> overflow data exists
         // clear buffer - clear the remaining \r(s) and \n - same as SIM900.readStringUntil('\n');
         char ch = 0;
+        int overflow_data_length = 0;
+        char overflow_data[bufferLength] = {0};
         unsigned long start_time = millis();
         while(millis()-start_time < 1000){
-            if(SIM900.available() > 0 && ch != '\n'){
-                ch = (char)SIM900.read();
-            } else if (ch == '\n') {
-                break;
+            
+            if(SIM900.available() > 0){
+                char chr = (char)SIM900.read();
+                if (ch == 0 && chr != '\r' && chr != '\n') {
+                    Serial.print("Overflow data: ");
+                } else if (ch != 0 && chr == '\n') {
+                    Serial.print('\n');
+                }
+
+                if (chr != '\r' && chr != '\n') {
+                    ch = chr;
+                    Serial.print(ch);
+                    if (overflow_data_length+1 < bufferLength) {
+                        overflow_data[overflow_data_length] = ch;
+                        overflow_data_length++;
+                        overflow_data[overflow_data_length] = '\0';
+                    }
+                } else if (chr == '\n') {
+                    break;
+                }
             }
             delay(1);
         }
+
+        // TODO - outside this function -> handle overflow data -> send new SMS with overflow data
+        /*if (overflow_data_length > 0) {
+            if (overflow_data_length+16 < bufferLength) {
+                strcat(overflow_data, " - OVERFLOW DATA");
+            }
+            Serial.println(F("Send SMS message with OVERFLOW data..."));
+            SIM900sendSMS(ADMIN_TEL_NUMBER, overflow_data);
+            Serial.println(F("Done."));
+        }*/
 
         return 1;
     }
