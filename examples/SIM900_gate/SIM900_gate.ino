@@ -71,7 +71,7 @@ void SIM900sendPreparedSMS();
 void SIM900sendSMS(const char *telNumber, const char *message);
 bool SIM900readLine(char *outputData, int bufferLength);
 void SIM900sendCmd(const char *cmd);
-typedef void (*handleSIM900messageFuncPtr)(bool, char*); // create a type to point to a function
+typedef void (*handleSIM900messageFuncPtr)(bool, char*); // create a type to point to a function (https://stackoverflow.com/a/33870738; https://stackoverflow.com/a/53503192)
 bool SIM900waitForResponse(const char *expectedResponse, unsigned int timeoutMS, int responseBufferLength, handleSIM900messageFuncPtr callbackFunctionForOtherResponses);
 bool SIM900checkWithCmd(const char *cmd, const char *expectedResponse, handleSIM900messageFuncPtr callbackFunctionForOtherResponses);
 bool SIM900waitForSerialDataAvailable(unsigned int timeoutMS);
@@ -165,7 +165,11 @@ void sim900loop()
 }
 
 void handleSIM900message(bool isEOLread, char *sim900outputData)
-{
+{   
+    // check free ram
+    //Serial.print(F("FREE RAM: "));
+    //Serial.println(freeMemory());
+    
     // skip empty lines
     if(sim900outputData[0] != '\0'){
         Serial.print(F("["));
@@ -342,10 +346,18 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
                     }
                 }
 
+
                 // get SMS text
                 char smsMessage[SIM900_STRING_MAX_LENGTH] = {0};
-                SIM900readLine(smsMessage, SMS_MAX_LENGTH+1);
+                char overflow_data[SIM900_STRING_MAX_LENGTH] = {0};
+                int overflow_data_length = 0;
+                if (!SIM900readLine(smsMessage, SMS_MAX_LENGTH+1)) {
+                    // read overflow data
+                    SIM900readLine(overflow_data, SMS_MAX_LENGTH+1); // read remaining data
+                    overflow_data_length = strlen(overflow_data);
+                }
                 int smsMessageLength = strlen(smsMessage);
+
 
                 Serial.print(F("SMS ID: "));
                 Serial.println(SMSid);
@@ -354,11 +366,25 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
                 Serial.print(F(" ("));
                 Serial.print(smsMessageLength);
                 Serial.println(F(")"));
-
                 SIM900waitForResponse("OK", SIM900_RESPONSE_TIMEOUT_DEFAULT, SIM900_STRING_MAX_LENGTH, handleSIM900message);
                 Serial.println(F("Reading SMS Done."));
 
 
+                // send SMS with overflow data
+                if (overflow_data_length > 0) {
+                    Serial.print(F("Overflow data: "));
+                    Serial.print(overflow_data);
+                    Serial.print(F(" ("));
+                    Serial.print(overflow_data_length);
+                    Serial.println(F(")"));
+                    
+                    if (overflow_data_length+16 < SMS_MAX_LENGTH+1) {
+                        strcat(overflow_data, " - OVERFLOW DATA");
+                    }
+                    Serial.println(F("Send SMS message with OVERFLOW data..."));
+                    SIM900sendSMS(ADMIN_TEL_NUMBER, overflow_data); // SIM900sendSMS() have to be after upper SIM900waitForResponse("OK")
+                    Serial.println(F("Done."));
+                }
 
 
 
@@ -924,52 +950,27 @@ bool SIM900readLine(char *outputData, int bufferLength)
 {
     if (SIM900.available() > 0){
         outputData[SIM900.readBytesUntil('\r', outputData, bufferLength-1)] = '\0'; // EOL = "\r\n"
-        //trim(outputData);
 
-        // TODO maybe - return overflow data - return 1 -> no overflow data; return 0 -> overflow data exists
         // clear buffer - clear the remaining \r(s) and \n - same as SIM900.readStringUntil('\n');
         char ch = 0;
-        int overflow_data_length = 0;
-        char overflow_data[bufferLength] = {0};
         unsigned long start_time = millis();
         while(millis()-start_time < 1000){
             
             if(SIM900.available() > 0){
-                char chr = (char)SIM900.read();
+                char chr = (char)SIM900.peek();
                 if (ch == 0 && chr != '\r' && chr != '\n') {
-                    Serial.print("Overflow data: ");
-                } else if (ch != 0 && chr == '\n') {
-                    Serial.print('\n');
+                    return 0; // overflow data - return 0 -> no overflow data (EOL read); return 1 -> overflow data exists
                 }
 
-                if (chr != '\r' && chr != '\n') {
-                    ch = chr;
-                    Serial.print(ch);
-                    if (overflow_data_length+1 < bufferLength) {
-                        overflow_data[overflow_data_length] = ch;
-                        overflow_data_length++;
-                        overflow_data[overflow_data_length] = '\0';
-                    }
-                } else if (chr == '\n') {
+                SIM900.read();
+                if (chr == '\n') {
                     break;
                 }
             }
             delay(1);
         }
-
-        // TODO - outside this function -> handle overflow data -> send new SMS with overflow data
-        /*if (overflow_data_length > 0) {
-            if (overflow_data_length+16 < bufferLength) {
-                strcat(overflow_data, " - OVERFLOW DATA");
-            }
-            Serial.println(F("Send SMS message with OVERFLOW data..."));
-            SIM900sendSMS(ADMIN_TEL_NUMBER, overflow_data);
-            Serial.println(F("Done."));
-        }*/
-
-        return 1;
     }
-    return 0;
+    return 1;
 }
 
 void SIM900sendCmd(const char *cmd)
@@ -988,7 +989,7 @@ bool SIM900waitForResponse(const char *expectedResponse, unsigned int timeoutMS,
             memset(response, '\0', sizeof(char)*responseBufferLength);
             bool isEOLread = SIM900readLine(response, sizeof(response) - 1);
             if(callbackFunctionForOtherResponses != NULL) {
-                callbackFunctionForOtherResponses(isEOLread, response);
+                handleSIM900messageFuncPtr(isEOLread, response);
             }
             if(strstr(response, expectedResponse) == response) {
                 return 1;
