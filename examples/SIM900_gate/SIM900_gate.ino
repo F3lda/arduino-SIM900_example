@@ -4,7 +4,7 @@
  * @brief Arduino with SIM900 shield example used to open gates
  * @date 2019-06-23
  * @author F3lda
- * @update 2023-07-25
+ * @update 2024-03-31 (v2.0)
  */
 
 // SIM900 GSM Shield example
@@ -16,9 +16,11 @@
 #include "telnumswhitelist.h"
 
 // General
-#define SIM900_STRING_MAX_LENGTH 164 // 164 -> max SMS size = 160 chars (153 <message> + 7 <joining data> OR 160 <only one message> --- https://stackoverflow.com/a/28029200)
+#define SIM900_STRING_MAX_LENGTH 161 // 160 + 1 -> max SMS size = 160 chars (160 <only one message> OR 153 <message> + 7 <joining data> --- https://stackoverflow.com/a/28029200)
+// maximum message size is 160 7-bit characters, 140 8-bit characters, or 70 16-bit characters (https://stackoverflow.com/a/21789103)
+// HEX SMS is encoded in: UTF-16 big-endian (https://string-o-matic.com/hex-decode)
+// This example is tested with SoftwareSerial RX buffer increased to 170! (see the readme)
 #define SIM900_RESPONSE_TIMEOUT_DEFAULT 15000 // 15 seconds
-#define SMS_MAX_LENGTH 160 // HEX SMS is encoded in: UTF-16 big-endian (https://string-o-matic.com/hex-decode)
 #define SMS_QUEUE_SIZE 10 // AT+CMGD=? -> get size of the SMS storage
 #define SMS_HANDLING_MAX_TIME 60000 // 1 minute
 #define SIM_CREDIT_STATUS_CMD "ATD*125*#;" // Dial *125*#
@@ -69,9 +71,9 @@ void SIM900prepareNewSMS(const char *telNumber);
 void SIM900addSMSdata(const char *message);
 void SIM900sendPreparedSMS();
 void SIM900sendSMS(const char *telNumber, const char *message);
-bool SIM900readLine(char *outputData, int bufferLength);
+int SIM900readLine(char *outputData, int bufferLength, bool readingSMStext); // before calling check if SIM900.available() -> else can return empty buffer
 void SIM900sendCmd(const char *cmd);
-typedef void (*handleSIM900messageFuncPtr)(bool, char*); // create a type to point to a function (https://stackoverflow.com/a/33870738; https://stackoverflow.com/a/53503192)
+typedef void (*handleSIM900messageFuncPtr)(bool, char*); // create a type to point to a function
 bool SIM900waitForResponse(const char *expectedResponse, unsigned int timeoutMS, int responseBufferLength, handleSIM900messageFuncPtr callbackFunctionForOtherResponses);
 bool SIM900checkWithCmd(const char *cmd, const char *expectedResponse, handleSIM900messageFuncPtr callbackFunctionForOtherResponses);
 bool SIM900waitForSerialDataAvailable(unsigned int timeoutMS);
@@ -147,7 +149,7 @@ void sim900loop()
     // receive SIM900 serial data
     if (SIM900.available() > 0){
         char sim900outputData[SIM900_STRING_MAX_LENGTH] = {0};
-        bool isEOLread = SIM900readLine(sim900outputData, sizeof(sim900outputData)-1);
+        bool isEOLread = (SIM900readLine(sim900outputData, sizeof(sim900outputData), false) == 1) ? true : false;
         handleSIM900message(isEOLread, sim900outputData);
     }
 
@@ -165,11 +167,7 @@ void sim900loop()
 }
 
 void handleSIM900message(bool isEOLread, char *sim900outputData)
-{   
-    // check free ram
-    //Serial.print(F("FREE RAM: "));
-    //Serial.println(freeMemory());
-    
+{
     // skip empty lines
     if(sim900outputData[0] != '\0'){
         Serial.print(F("["));
@@ -335,6 +333,7 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
 
                 Serial.println(F("READING SMS!"));
 
+
                 // get SMS sender tel number
                 char SMSid[20] = "(NULL)";
                 char *telnumber = strstr(sim900outputData, ",\"")+2;
@@ -349,11 +348,13 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
 
                 // get SMS text
                 char smsMessage[SIM900_STRING_MAX_LENGTH] = {0};
-                char overflow_data[SIM900_STRING_MAX_LENGTH] = {0};
+                char *overflow_data = sim900outputData; overflow_data[0] = '\0'; // recycling sim900outputData variable
                 int overflow_data_length = 0;
-                if (!SIM900readLine(smsMessage, SMS_MAX_LENGTH+1)) {
+                while (!SIM900.available()) {delay(1);} // wait for data
+                if (!((bool)SIM900readLine(smsMessage, SIM900_STRING_MAX_LENGTH, true))) {
                     // read overflow data
-                    SIM900readLine(overflow_data, SMS_MAX_LENGTH+1); // read remaining data
+                    while (!SIM900.available()) {delay(1);} // wait for overflow data
+                    SIM900readLine(overflow_data, SIM900_STRING_MAX_LENGTH, true); // read remaining data
                     overflow_data_length = strlen(overflow_data);
                 }
                 int smsMessageLength = strlen(smsMessage);
@@ -361,9 +362,9 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
 
                 Serial.print(F("SMS ID: "));
                 Serial.println(SMSid);
-                Serial.print(F("SMS text: "));
+                Serial.print(F("SMS text: ["));
                 Serial.print(smsMessage);
-                Serial.print(F(" ("));
+                Serial.print(F("] ("));
                 Serial.print(smsMessageLength);
                 Serial.println(F(")"));
                 SIM900waitForResponse("OK", SIM900_RESPONSE_TIMEOUT_DEFAULT, SIM900_STRING_MAX_LENGTH, handleSIM900message);
@@ -372,13 +373,13 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
 
                 // send SMS with overflow data
                 if (overflow_data_length > 0) {
-                    Serial.print(F("Overflow data: "));
+                    Serial.print(F("Overflow data: ["));
                     Serial.print(overflow_data);
-                    Serial.print(F(" ("));
+                    Serial.print(F("] ("));
                     Serial.print(overflow_data_length);
                     Serial.println(F(")"));
-                    
-                    if (overflow_data_length+16 < SMS_MAX_LENGTH+1) {
+
+                    if (overflow_data_length+16 < SIM900_STRING_MAX_LENGTH) {
                         strcat(overflow_data, " - OVERFLOW DATA");
                     }
                     Serial.println(F("Send SMS message with OVERFLOW data..."));
@@ -388,11 +389,10 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
 
 
 
-                // recycling sim900outputData variable
-                char *smsCmd = sim900outputData;
-                smsCmd[0] = '\0';
 
 
+                // process received SMS
+                char *smsCmd = sim900outputData; smsCmd[0] = '\0';// recycling sim900outputData variable
                 static char LastSMSid[sizeof(SMSid)] = {0};
                 static bool SenderNumberSent = false;
                 // last message - wait 30 seconds if there is a next SMS (only if current SMS is 153 chars long)
@@ -480,6 +480,7 @@ void handleSIM900message(bool isEOLread, char *sim900outputData)
 
                 // initial (153 chars long) and NON WHITELIST messages
                 } else {
+
                     SenderNumberSent = false;
 
                     // unknown messages - send them to admin
@@ -786,9 +787,9 @@ bool sim900init()
     // SIM900 serial
     SIM900.begin(19200);              // SIM900 default baud rate (DEFAULT: 19200)
 
-    SIM900.print("AT+IPR=");          // Tell the SIM900 not to autobaud
+    SIM900.print(F("AT+IPR="));          // Tell the SIM900 not to autobaud
     SIM900.print(SIM900_SPEED);       // -> lower baudrate could be less power consuming
-    SIM900.print("\r");               // send
+    SIM900.print(F("\r"));               // send
     SIM900.flush();                   // wait for transmission (and in some versions of the SoftwareSerial.h removes any buffered incoming serial data ---> if not working as expected, remove this line)
 
     SIM900.end();                     // disconnect SIM900 serial
@@ -912,16 +913,16 @@ int sim900checkStatus()
 
 void SIM900prepareNewSMS(const char *telNumber)
 {
-    SIM900.print("AT+CMGS=\"");
+    SIM900.print(F("AT+CMGS=\""));
     SIM900.print(telNumber);
-    SIM900.print("\"\r");
+    SIM900.print(F("\"\r"));
     SIM900waitForResponse("> ", SIM900_RESPONSE_TIMEOUT_DEFAULT, SIM900_STRING_MAX_LENGTH, handleSIM900message);
 }
 
 void SIM900addSMSdata(const char *message)
 {
     SIM900.print(message);
-    SIM900.print("\r");
+    SIM900.print(F("\r"));
     SIM900waitForResponse("> ", SIM900_RESPONSE_TIMEOUT_DEFAULT, SIM900_STRING_MAX_LENGTH, handleSIM900message);
 }
 
@@ -934,49 +935,93 @@ void SIM900sendPreparedSMS()
 
 void SIM900sendSMS(const char *telNumber, const char *message)
 {
-    SIM900.print("AT+CMGS=\"");
+    SIM900.print(F("AT+CMGS=\""));
     SIM900.print(telNumber);
-    SIM900.print("\"\r");
+    SIM900.print(F("\"\r"));
     SIM900waitForResponse("> ", SIM900_RESPONSE_TIMEOUT_DEFAULT, SIM900_STRING_MAX_LENGTH, handleSIM900message);
     SIM900.print(message);
-    SIM900.print("\r");
+    SIM900.print(F("\r"));
     SIM900waitForResponse("> ", SIM900_RESPONSE_TIMEOUT_DEFAULT, SIM900_STRING_MAX_LENGTH, handleSIM900message);
     SIM900.print((char)(26));
     SIM900waitForResponse("OK", SIM900_RESPONSE_TIMEOUT_DEFAULT, SIM900_STRING_MAX_LENGTH, handleSIM900message);
     Serial.println(F("SMS sent: OK"));
 }
 
-bool SIM900readLine(char *outputData, int bufferLength)
+int SIM900readLine(char *outputData, int bufferLength, bool readingSMStext)
 {
+    // check free ram
+    /*Serial.print(F("FREE RAM: "));
+    Serial.println(freeMemory());*/
+
     if (SIM900.available() > 0){
-        outputData[SIM900.readBytesUntil('\r', outputData, bufferLength-1)] = '\0'; // EOL = "\r\n"
-
-        // clear buffer - clear the remaining \r(s) and \n - same as SIM900.readStringUntil('\n');
-        char ch = 0;
-        unsigned long start_time = millis();
-        while(millis()-start_time < 1000){
-            
-            if(SIM900.available() > 0){
-                char chr = (char)SIM900.peek();
-                if (ch == 0 && chr != '\r' && chr != '\n') {
-                    return 0; // overflow data - return 0 -> no overflow data (EOL read); return 1 -> overflow data exists
-                }
-
+        if (!readingSMStext) {
+            while (SIM900.peek() == '\r' || SIM900.peek() == '\n') {
+                /*Serial.print(F("Peek START: ["));
+                Serial.print((char)SIM900.peek());
+                Serial.print(F("]("));
+                Serial.print((int)SIM900.peek());
+                Serial.println(F(")"));*/
                 SIM900.read();
-                if (chr == '\n') {
-                    break;
-                }
             }
-            delay(1);
         }
+
+
+        int readLength = SIM900.readBytesUntil('\r', outputData, bufferLength-1); // EOL = '\r' (ATS3? -> get Command Line Termination Character)
+        outputData[readLength] = '\0';
+
+
+        /*Serial.print(F("OVER Peek1: ["));
+        Serial.print((char)SIM900.peek());
+        Serial.print(F("]("));
+        Serial.print((int)SIM900.peek());
+        Serial.println(F(")"));*/
+
+        /*Serial.print(F("Line: {"));
+        Serial.print(outputData);
+        Serial.println(F("}"));*/
+
+        if (readLength == bufferLength-1 && SIM900.peek() != '\r') {
+            //Serial.println("DATA OVERFLOW!");
+            return 0;
+        } else {
+            //Serial.println("ALL READ!");
+
+            // clear buffer - clear the remaining \r(s) and \n
+            if (strstr(outputData, "+CMGR:") != outputData) { // only if next line is not SMS text
+                unsigned long start_time = millis();
+                while (millis()-start_time < 1000){
+                    if (SIM900.peek() == '\r' || SIM900.peek() == '\n'){
+                        /*Serial.print(F("OVER Peek END: ["));
+                        Serial.print((char)SIM900.peek());
+                        Serial.print(F("]("));
+                        Serial.print((int)SIM900.peek());
+                        Serial.println(F(")"));*/
+                        SIM900.read();
+                    } else {
+                        break;
+                    }
+                    delay(1);
+                }
+            } else { // if next line is SMS text -> read only first '\n' (the next one is part of the SMS message)
+                /*Serial.print(F("+CMGR: END: ["));
+                Serial.print((char)SIM900.peek());
+                Serial.print(F("]("));
+                Serial.print((int)SIM900.peek());
+                Serial.println(F(")"));*/
+
+                while (SIM900.peek() != '\n') {delay(1);} // wait for '\n'
+                SIM900.read();
+            }
+        }
+        return 1;
     }
-    return 1;
+    return -1;
 }
 
 void SIM900sendCmd(const char *cmd)
 {
     SIM900.print(cmd);
-    SIM900.print("\r"); // ATS3? - get Command Line Termination Character
+    SIM900.print(F("\r")); // ATS3? - get Command Line Termination Character
     SIM900.flush(); // wait for transmission (and in some versions of the SoftwareSerial.h removes any buffered incoming serial data ---> if not working as expected, remove this line)
 }
 
@@ -987,9 +1032,9 @@ bool SIM900waitForResponse(const char *expectedResponse, unsigned int timeoutMS,
     while(millis()-start_time < timeoutMS){
         if(SIM900.available()){
             memset(response, '\0', sizeof(char)*responseBufferLength);
-            bool isEOLread = SIM900readLine(response, sizeof(response) - 1);
+            bool isEOLread = (SIM900readLine(response, responseBufferLength, false) == 1) ? true : false;
             if(callbackFunctionForOtherResponses != NULL) {
-                handleSIM900messageFuncPtr(isEOLread, response);
+                callbackFunctionForOtherResponses(isEOLread, response);
             }
             if(strstr(response, expectedResponse) == response) {
                 return 1;
