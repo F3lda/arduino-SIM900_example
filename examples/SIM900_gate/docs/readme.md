@@ -43,7 +43,19 @@ Opening gates and door using mobile calls and SMS messages.
   <li>Result:
     <br><img src="13.jpg" alt="Result" width="50%" height="50%">
   </li>
+  <li>Increase the size of the SoftwareSerial RX buffer (see below)</li>
   <li>Download the code, edit and run</li>
+</ol>
+
+## Increase the size of the SoftwareSerial RX buffer
+<ol>
+  <li>Enable verbose output during compilation in Arduino IDE</li>
+  <li>Compile code</li>
+  <li>Find this line with library location: <br><code>Using library SoftwareSerial at version 1.0 in folder: 
+  <br>C:\Users\admin\AppData\Local\Arduino15\packages\arduino\hardware\avr\1.8.6\libraries\SoftwareSerial</code></li>
+  <li>Open this file in the found path: src/SoftwareSerial.h</li>
+  <li>Edit this line (change value to 170): <code>#define _SS_MAX_RX_BUFF 170 // RX buffer size</code></li>
+  <li>Reopen Arduino IDE to clear cache</li>
 </ol>
 
 ## Links:
